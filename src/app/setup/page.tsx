@@ -74,7 +74,13 @@ export default function SetupPage() {
     try {
       const res = await fetch("/api/profiles");
       const data = await res.json();
-      setProfilesList(data.profiles || []);
+      const profiles = data.profiles || [];
+      setProfilesList(profiles);
+      if (profiles.length > 0) {
+        setStep("profile-selection");
+      } else if (data.activeProfileId) {
+        setStep("profile-selection");
+      }
     } catch {}
   };
 
@@ -299,7 +305,7 @@ export default function SetupPage() {
     }}>
       {/* STEP 1: GITHUB LOGIN */}
       {step === "login" && (
-        <div style={{
+        <div className="animate-fade-slide" style={{
           display: "flex",
           flexDirection: "row",
           alignItems: "stretch",
@@ -323,8 +329,8 @@ export default function SetupPage() {
           }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "32px" }}>
-                <svg width="32" height="32" viewBox="0 0 16 16" version="1.1" fill="var(--color-fg-default)">
-                  <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.35 2.69.91 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-fg-default)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l.73-2.79" />
                 </svg>
                 <span style={{
                   fontSize: "18px",
@@ -416,8 +422,12 @@ export default function SetupPage() {
                   }}
                   onClick={handleOauthStart}
                 >
-                  <svg height="16" viewBox="0 0 16 16" version="1.1" width="16" fill="white">
-                    <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.35 2.69.91 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path>
+                  <svg height="16" viewBox="0 0 24 24" width="16" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="18" r="3" />
+                    <circle cx="6" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 15V9a4 4 0 0 0-4-4H9" />
+                    <line x1="6" y1="9" x2="6" y2="15" />
                   </svg>
                   Sign in with GitHub App
                 </button>
@@ -484,7 +494,7 @@ export default function SetupPage() {
 
       {/* STEP 2: WORKSPACE PROFILE SELECTION (BillCraft Style) */}
       {step === "profile-selection" && (
-        <div style={{ width: "680px", maxWidth: "100%" }}>
+        <div className="animate-fade-slide" style={{ width: "680px", maxWidth: "100%" }}>
           <div style={{ textAlign: "center", marginBottom: "24px" }}>
             <h1 style={{ fontSize: "28px", fontWeight: "700", letterSpacing: "-0.5px", marginBottom: "8px" }}>Select Workspace</h1>
             <p style={{ color: "var(--color-fg-muted)", fontSize: "14px" }}>Choose a previously set up repository workspace or initialize a new one.</p>
@@ -500,6 +510,7 @@ export default function SetupPage() {
               <div
                 key={p.id}
                 onClick={() => handleProfileSelect(p.id)}
+                className="interactive-card"
                 style={{
                   border: "1px solid var(--color-border-default)",
                   borderRadius: "8px",
@@ -511,10 +522,7 @@ export default function SetupPage() {
                   minHeight: "150px",
                   boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
                   cursor: "pointer",
-                  transition: "all 0.2s",
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--color-accent-border)"; e.currentTarget.style.backgroundColor = "rgba(22, 27, 34, 0.4)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--color-border-default)"; e.currentTarget.style.backgroundColor = "var(--color-bg-subtle)"; }}
               >
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
@@ -557,6 +565,7 @@ export default function SetupPage() {
                 setSelectedRepo("");
                 setRepoName("");
               }}
+              className="interactive-card"
               style={{
                 border: "2px dashed var(--color-border-default)",
                 borderRadius: "8px",
@@ -567,11 +576,8 @@ export default function SetupPage() {
                 justifyContent: "center",
                 minHeight: "150px",
                 cursor: "pointer",
-                transition: "all 0.2s",
                 backgroundColor: "transparent",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--color-accent-border)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--color-border-default)"; }}
             >
               <div style={{ fontSize: "28px", color: "var(--color-fg-muted)", marginBottom: "8px" }}>+</div>
               <div style={{ fontWeight: 600, fontSize: "14px", color: "var(--color-fg-muted)", textAlign: "center" }}>Set up new repository</div>
@@ -579,8 +585,15 @@ export default function SetupPage() {
           </div>
 
           <div style={{ textAlign: "left" }}>
-            <button className="btn" onClick={() => setStep("login")}>
-              Back to Sign In
+            <button className="btn btn-danger" onClick={async () => {
+              await fetch("/api/profiles", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: "select", id: null }),
+              });
+              setStep("login");
+            }}>
+              Log Out
             </button>
           </div>
         </div>
@@ -588,7 +601,7 @@ export default function SetupPage() {
 
       {/* STEP 3: REPOSITORY SELECTION & CONFIGURATION (WITH TOP MODE TOGGLE) */}
       {step === "repo-selection" && (
-        <div style={{ width: setupMode === "github" ? "960px" : "540px", maxWidth: "100%", transition: "width 0.2s" }}>
+        <div className="animate-fade-slide" style={{ width: setupMode === "github" ? "960px" : "540px", maxWidth: "100%", transition: "all 0.3s cubic-bezier(0.16, 1, 0.3, 1)" }}>
           
           {/* Top Toggle Switch */}
           <div style={{ display: "flex", justifyContent: "center", marginBottom: "28px" }}>
@@ -986,8 +999,12 @@ export default function SetupPage() {
           <div className="card" style={{ width: "480px", border: "1px solid var(--color-border-default)", boxShadow: "0 8px 32px rgba(0,0,0,0.8)" }}>
             <div className="card-header" style={{ display: "flex", justifyContent: "space-between", padding: "12px 16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                <svg height="16" viewBox="0 0 16 16" version="1.1" width="16" fill="var(--color-fg-default)">
-                  <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.35 2.69.91 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path>
+                <svg height="16" viewBox="0 0 24 24" width="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="18" r="3" />
+                  <circle cx="6" cy="6" r="3" />
+                  <circle cx="6" cy="18" r="3" />
+                  <path d="M18 15V9a4 4 0 0 0-4-4H9" />
+                  <line x1="6" y1="9" x2="6" y2="15" />
                 </svg>
                 <span style={{ fontWeight: 600 }}>Authorize OmniSync GitHub App</span>
               </div>

@@ -6,6 +6,7 @@ import FileTree, { FileNode } from "@/components/FileTree";
 import CodeViewer from "@/components/CodeViewer";
 import DiffViewer from "@/components/DiffViewer";
 import ConflictResolver from "@/components/ConflictResolver";
+import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
 import { UserProfile } from "@/lib/profiles";
 import { RunnerStatus } from "@/lib/runner";
 
@@ -28,13 +29,14 @@ interface DiagnosticDetails {
 
 export default function DashboardPage() {
   const router = useAppRouter();
-  const [activeTab, setActiveTab] = useState<"workspace" | "git" | "diagnostics">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "git" | "diagnostics" | "settings">("workspace");
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
 
   // Workspace state
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [fileContent, setFileContent] = useState("");
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [branches, setBranches] = useState<string[]>([]);
@@ -56,6 +58,12 @@ export default function DashboardPage() {
   const [isDiagLoading, setIsDiagLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<{ success: boolean; output: string } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+
+  // Layout Resizing state
+  const [leftWidth, setLeftWidth] = useState(240);
+  const [rightWidth, setRightWidth] = useState(360);
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
 
   // Polling ref for logs
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -173,32 +181,108 @@ export default function DashboardPage() {
 
   // 4. Load selected file content
   useEffect(() => {
-    if (!selectedFile) {
+    if (!activeFile) {
       Promise.resolve().then(() => {
         setFileContent("");
       });
       return;
     }
 
+    let active = true;
+    const timer = setTimeout(() => {
+      if (active) setIsFileLoading(true);
+    }, 150); // Debounce: only show spinner/loading if the load takes > 150ms
+
     async function loadFileContent() {
-      setIsFileLoading(true);
       try {
-        const res = await fetch(`/api/workspace/file-content?file=${encodeURIComponent(selectedFile!)}`);
+        const res = await fetch(`/api/workspace/file-content?file=${encodeURIComponent(activeFile!)}`);
         const data = await res.json();
-        if (data.error) {
-          setFileContent(`Error loading file: ${data.error}`);
-        } else {
-          setFileContent(data.content || "");
+        if (active) {
+          if (data.error) {
+            setFileContent(`Error loading file: ${data.error}`);
+          } else {
+            setFileContent(data.content || "");
+          }
         }
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setFileContent(`Error loading file: ${msg}`);
+        if (active) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setFileContent(`Error loading file: ${msg}`);
+        }
       } finally {
-        setIsFileLoading(false);
+        clearTimeout(timer);
+        if (active) {
+          setIsFileLoading(false);
+        }
       }
     }
+
     loadFileContent();
-  }, [selectedFile]);
+
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [activeFile]);
+
+  // Handlers for multiple file tabs
+  const handleSelectFile = (file: string) => {
+    setOpenFiles((prev) => {
+      if (prev.includes(file)) return prev;
+      return [...prev, file];
+    });
+    setActiveFile(file);
+  };
+
+  const handleCloseFile = (fileToClose: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setOpenFiles((prev) => {
+      const updated = prev.filter((f) => f !== fileToClose);
+      if (activeFile === fileToClose) {
+        setActiveFile(updated.length > 0 ? updated[updated.length - 1] : null);
+      }
+      return updated;
+    });
+  };
+
+  // Handle layout resizing interactions
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (isResizingLeft) {
+        const newWidth = Math.max(150, Math.min(450, e.clientX));
+        setLeftWidth(newWidth);
+      }
+      if (isResizingRight) {
+        const newWidth = Math.max(200, Math.min(600, window.innerWidth - e.clientX));
+        setRightWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingLeft(false);
+      setIsResizingRight(false);
+    };
+
+    if (isResizingLeft || isResizingRight) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingLeft, isResizingRight]);
+
+  const startResizeLeft = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingLeft(true);
+  };
+
+  const startResizeRight = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingRight(true);
+  };
 
   // Handle Tab Change side-effects
   useEffect(() => {
@@ -222,7 +306,7 @@ export default function DashboardPage() {
       if (data.success) {
         setCurrentBranch(data.current);
         loadWorkspaceFiles();
-        setSelectedFile(null);
+        setActiveFile(null);
       } else {
         alert(`Failed to switch branch: ${data.error}`);
       }
@@ -276,8 +360,11 @@ export default function DashboardPage() {
 
   if (isLoadingProfile) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", backgroundColor: "var(--color-bg-default)" }}>
-        <div className="spinner" style={{ width: "32px", height: "32px" }}></div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", backgroundColor: "var(--color-bg-default)", gap: "16px" }}>
+        <div className="spinner animate-pulse-glow" style={{ width: "40px", height: "40px" }}></div>
+        <div className="animate-pulse" style={{ color: "var(--color-fg-muted)", fontSize: "14px", fontWeight: "500", letterSpacing: "-0.2px" }}>
+          Synchronizing Workspace...
+        </div>
       </div>
     );
   }
@@ -287,8 +374,8 @@ export default function DashboardPage() {
       {/* Top Banner Header */}
       <header className="header">
         <div className="header-brand">
-          <svg height="20" viewBox="0 0 16 16" version="1.1" width="20" fill="var(--color-header-text)">
-            <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.35 2.69.91 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"></path>
+          <svg height="20" viewBox="0 0 24 24" width="20" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l.73-2.79" />
           </svg>
           <span style={{ fontSize: "14px", fontWeight: "600" }}>OmniSync Workspace</span>
           <span className="badge badge-info" style={{ fontSize: "10px", marginLeft: "4px" }}>
@@ -303,11 +390,10 @@ export default function DashboardPage() {
             <div style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>{activeProfile?.profession}</div>
           </div>
           
-          <button className="btn btn-sm" onClick={async () => {
-            await fetch("/api/profiles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "select", id: null }) });
+          <button className="btn btn-sm" onClick={() => {
             router.push("/setup");
           }}>
-            Log Out
+            Switch Workspace
           </button>
         </div>
       </header>
@@ -321,29 +407,45 @@ export default function DashboardPage() {
             className={`sidebar-btn ${activeTab === "workspace" ? "active" : ""}`}
             title="Code Workspace"
           >
-            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4.72 3.22a.75.75 0 011.06 1.06L2.06 8l3.72 3.72a.75.75 0 11-1.06 1.06L.47 8.53a.75.75 0 010-1.06l4.25-4.25zm6.56 0a.75.75 0 10-1.06 1.06L13.94 8l-3.72 3.72a.75.75 0 101.06 1.06l4.25-4.25a.75.75 0 000-1.06l-4.25-4.25z"></path>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
             </svg>
           </button>
-
+ 
           <button
             onClick={() => setActiveTab("git")}
             className={`sidebar-btn ${activeTab === "git" ? "active" : ""}`}
             title="Git Collaboration & Merges"
           >
-            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.292a.25.25 0 01-.427.177L7.177 2.927a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-1.5.75a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm1.5 8.25a.75.75 0 100 1.5.75.75 0 000-1.5zm-1.5.75a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0zm9.5-6.5a.75.75 0 100-1.5.75.75 0 000 1.5zM10.25 4a1.5 1.5 0 113 0 1.5 1.5 0 01-3 0z"></path>
-              <path d="M3.75 4v8m8-3.5v-3"></path>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
             </svg>
           </button>
-
+ 
           <button
             onClick={() => setActiveTab("diagnostics")}
             className={`sidebar-btn ${activeTab === "diagnostics" ? "active" : ""}`}
             title="Diagnostics Dashboard"
           >
-            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M1.5 0A1.5 1.5 0 000 1.5v13A1.5 1.5 0 001.5 16h13a1.5 1.5 0 001.5-1.5v-13A1.5 1.5 0 0014.5 0h-13zM1 1.5a.5.5 0 01.5-.5h13a.5.5 0 01.5.5v13a.5.5 0 01-.5.5h-13a.5.5 0 01-.5-.5v-13zM6.5 3.75A.75.75 0 017 4.5v3.25h2.25a.75.75 0 010 1.5H6.25a.75.75 0 01-.75-.75V4.5a.75.75 0 011-1.25z"></path>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 17 10 11 4 5" />
+              <line x1="12" y1="19" x2="20" y2="19" />
+            </svg>
+          </button>
+ 
+          <button
+            onClick={() => setActiveTab("settings")}
+            className={`sidebar-btn ${activeTab === "settings" ? "active" : ""}`}
+            title="Workspace Settings"
+            style={{ marginTop: "auto" }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
             </svg>
           </button>
         </nav>
@@ -352,7 +454,7 @@ export default function DashboardPage() {
         <main className="content-pane">
           {/* TAB 1: CODE WORKSPACE VIEW */}
           {activeTab === "workspace" && (
-            <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+            <div className="animate-fade-slide" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
               {/* Top Control Bar */}
               <div style={{
                 display: "flex",
@@ -379,8 +481,8 @@ export default function DashboardPage() {
                       </>
                     ) : (
                       <>
-                        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style={{ marginRight: "4px" }}>
-                          <path d="M8 0a8 8 0 110 16A8 8 0 018 0zM4.5 5.5v5l5-2.5-5-2.5z"></path>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: "4px" }}>
+                          <polygon points="5 3 19 12 5 21 5 3" />
                         </svg>
                         Run Server
                       </>
@@ -415,36 +517,146 @@ export default function DashboardPage() {
               <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
                 {/* Column 1: Left file tree */}
                 <div style={{
-                  width: "240px",
-                  borderRight: "1px solid var(--color-border-default)",
+                  width: `${leftWidth}px`,
                   backgroundColor: "var(--color-bg-subtle)",
                   overflowY: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  flexShrink: 0,
                 }}>
                   <div style={{ padding: "12px 16px 4px 16px", fontSize: "11px", fontWeight: "600", textTransform: "uppercase", color: "var(--color-fg-muted)" }}>
                     Workspace Files
                   </div>
                   <FileTree
                     tree={fileTree}
-                    selectedFile={selectedFile}
+                    selectedFile={activeFile}
                     onSelectFile={(f) => {
                       setSelectedConflictFile(null);
-                      setSelectedFile(f);
+                      handleSelectFile(f);
                     }}
                   />
                 </div>
 
-                {/* Column 2: Code Viewer */}
-                <div style={{ flex: 2, borderRight: "1px solid var(--color-border-default)", overflow: "hidden" }}>
-                  <CodeViewer
-                    filePath={selectedFile || ""}
-                    content={fileContent}
-                    isLoading={isFileLoading}
-                  />
+                {/* Left resizer vertical bar */}
+                <div
+                  onMouseDown={startResizeLeft}
+                  style={{
+                    width: "4px",
+                    cursor: "col-resize",
+                    backgroundColor: isResizingLeft ? "var(--color-accent-fg)" : "transparent",
+                    borderLeft: "1px solid var(--color-border-default)",
+                    borderRight: "1px solid var(--color-border-default)",
+                    transition: "background-color 0.15s",
+                    zIndex: 10,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isResizingLeft) e.currentTarget.style.backgroundColor = "var(--color-border-default)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isResizingLeft) e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                />
+
+                {/* Column 2: Code Viewer with Tabs */}
+                <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                  {/* VS Code Style Tab Bar */}
+                  {openFiles.length > 0 && (
+                    <div style={{
+                      display: "flex",
+                      backgroundColor: "var(--color-bg-subtle)",
+                      borderBottom: "1px solid var(--color-border-default)",
+                      overflowX: "auto",
+                      flexShrink: 0,
+                    }}>
+                      {openFiles.map((file) => {
+                        const isActive = file === activeFile;
+                        const fileName = file.split("/").pop() || file;
+                        return (
+                          <div
+                            key={file}
+                            onClick={() => handleSelectFile(file)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 16px",
+                              fontSize: "12px",
+                              fontWeight: isActive ? 600 : 400,
+                              color: isActive ? "var(--color-fg-default)" : "var(--color-fg-muted)",
+                              backgroundColor: isActive ? "var(--color-bg-default)" : "transparent",
+                              borderRight: "1px solid var(--color-border-default)",
+                              cursor: "pointer",
+                              userSelect: "none",
+                              borderTop: isActive ? "2px solid var(--color-accent-fg)" : "2px solid transparent",
+                              position: "relative",
+                              transition: "all 0.15s cubic-bezier(0.16, 1, 0.3, 1)",
+                            }}
+                          >
+                            <span>{fileName}</span>
+                            <button
+                              onClick={(e) => handleCloseFile(file, e)}
+                              style={{
+                                background: "none",
+                                border: "none",
+                                color: "var(--color-fg-muted)",
+                                cursor: "pointer",
+                                fontSize: "11px",
+                                padding: "2px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                borderRadius: "4px",
+                                transition: "all 0.1s",
+                              }}
+                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--color-bg-active)"}
+                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div style={{ flex: 1, overflow: "hidden" }}>
+                    <CodeViewer
+                      filePath={activeFile || ""}
+                      content={fileContent}
+                      isLoading={isFileLoading}
+                    />
+                  </div>
                 </div>
 
+                {/* Right resizer vertical bar */}
+                <div
+                  onMouseDown={startResizeRight}
+                  style={{
+                    width: "4px",
+                    cursor: "col-resize",
+                    backgroundColor: isResizingRight ? "var(--color-accent-fg)" : "transparent",
+                    borderLeft: "1px solid var(--color-border-default)",
+                    borderRight: "1px solid var(--color-border-default)",
+                    transition: "background-color 0.15s",
+                    zIndex: 10,
+                    flexShrink: 0,
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isResizingRight) e.currentTarget.style.backgroundColor = "var(--color-border-default)";
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isResizingRight) e.currentTarget.style.backgroundColor = "transparent";
+                  }}
+                />
+
                 {/* Column 3: Commit Diff history */}
-                <div style={{ flex: 1, overflow: "hidden" }}>
-                  <DiffViewer selectedFile={selectedFile} />
+                <div style={{
+                  width: `${rightWidth}px`,
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}>
+                  <DiffViewer selectedFile={activeFile} />
                 </div>
               </div>
             </div>
@@ -452,7 +664,7 @@ export default function DashboardPage() {
 
           {/* TAB 2: GIT COLLABORATION AND CONFLICTS PANEL */}
           {activeTab === "git" && (
-            <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+            <div className="animate-fade-slide" style={{ display: "flex", height: "100%", overflow: "hidden" }}>
               <div style={{
                 width: "280px",
                 borderRight: "1px solid var(--color-border-default)",
@@ -578,7 +790,7 @@ export default function DashboardPage() {
 
           {/* TAB 3: DIAGNOSTICS DASHBOARD PANEL */}
           {activeTab === "diagnostics" && (
-            <div style={{ display: "flex", height: "100%", overflow: "hidden" }}>
+            <div className="animate-fade-slide" style={{ display: "flex", height: "100%", overflow: "hidden" }}>
               <div style={{
                 flex: 1.2,
                 borderRight: "1px solid var(--color-border-default)",
@@ -747,6 +959,19 @@ export default function DashboardPage() {
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB 4: WORKSPACE SETTINGS PANEL */}
+          {activeTab === "settings" && (
+            <WorkspaceSettingsView
+              activeProfile={activeProfile}
+              onProfileUpdated={(updatedProfile) => {
+                setActiveProfile(updatedProfile);
+                loadWorkspaceFiles();
+                loadGitBranches();
+                loadGitSyncStatus();
+              }}
+            />
           )}
         </main>
       </div>

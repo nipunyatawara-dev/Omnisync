@@ -43,6 +43,7 @@ next-env.d.ts
 # local/agent files
 /AGENTS.md
 /CLAUDE.md
+/Antigravity.md
 
 # local user data and IDE settings
 /User data/
