@@ -9,6 +9,7 @@ import {
   getCommitDiff,
   getConflictFiles,
   parseConflictFile,
+  getAllRepoCommits,
 } from "@/lib/git";
 import path from "path";
 
@@ -23,6 +24,11 @@ export async function GET(request: Request) {
   const action = searchParams.get("action");
 
   try {
+    if (action === "all-commits") {
+      const commits = getAllRepoCommits(cwd);
+      return NextResponse.json({ commits });
+    }
+
     if (action === "branches") {
       const branches = getBranches(cwd);
       const current = getCurrentBranch(cwd);

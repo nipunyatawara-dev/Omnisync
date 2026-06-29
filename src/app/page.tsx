@@ -16,6 +16,14 @@ interface SyncStatus {
   upstream: string;
 }
 
+interface RepoCommit {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
+  isMerge: boolean;
+}
+
 interface DiagnosticDetails {
   nodeVersion: string;
   npmVersion: string;
@@ -27,9 +35,14 @@ interface DiagnosticDetails {
   gitStatus: string;
 }
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
 export default function DashboardPage() {
   const router = useAppRouter();
-  const [activeTab, setActiveTab] = useState<"workspace" | "git" | "diagnostics" | "settings">("workspace");
+  const [activeTab, setActiveTab] = useState<"workspace" | "git" | "diagnostics" | "settings" | "timeline">("workspace");
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
 
@@ -58,6 +71,13 @@ export default function DashboardPage() {
   const [isDiagLoading, setIsDiagLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<{ success: boolean; output: string } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+
+  // Timeline state
+  const [allCommits, setAllCommits] = useState<RepoCommit[]>([]);
+  const [isTimelineLoading, setIsTimelineLoading] = useState(false);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
+  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
 
   // Layout Resizing state
   const [leftWidth, setLeftWidth] = useState(240);
@@ -116,6 +136,17 @@ export default function DashboardPage() {
     }
   };
 
+  const loadAllCommits = async () => {
+    setIsTimelineLoading(true);
+    try {
+      const res = await fetch("/api/workspace/git?action=all-commits");
+      const data = await res.json();
+      setAllCommits((data.commits as RepoCommit[]) || []);
+    } catch {} finally {
+      setIsTimelineLoading(false);
+    }
+  };
+
   // 1. Fetch Profile details first
   useEffect(() => {
     async function loadProfile() {
@@ -150,6 +181,7 @@ export default function DashboardPage() {
       loadGitBranches();
       loadGitSyncStatus();
       loadConflictFiles();
+      loadAllCommits();
     });
   }, [activeProfile]);
 
@@ -437,6 +469,19 @@ export default function DashboardPage() {
             </svg>
           </button>
  
+          <button
+            onClick={() => setActiveTab("timeline")}
+            className={`sidebar-btn ${activeTab === "timeline" ? "active" : ""}`}
+            title="Commit History Timeline Calendar"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+              <line x1="16" y1="2" x2="16" y2="6" />
+              <line x1="8" y1="2" x2="8" y2="6" />
+              <line x1="3" y1="10" x2="21" y2="10" />
+            </svg>
+          </button>
+
           <button
             onClick={() => setActiveTab("settings")}
             className={`sidebar-btn ${activeTab === "settings" ? "active" : ""}`}
@@ -1136,6 +1181,291 @@ export default function DashboardPage() {
               ) : (
                 <div style={{ fontSize: "13px", color: "var(--color-fg-muted)", padding: "16px", textAlign: "center" }}>
                   Environment diagnostics data unavailable.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: COMMIT HISTORY TIMELINE CALENDAR PANEL */}
+          {activeTab === "timeline" && (
+            <div className="animate-fade-slide" style={{
+              flex: 1,
+              padding: "32px",
+              overflowY: "auto",
+              backgroundColor: "var(--color-bg-default)",
+              display: "flex",
+              flexDirection: "column",
+              gap: "24px",
+              maxWidth: "1100px",
+              margin: "0 auto",
+              width: "100%",
+            }}>
+              <div>
+                <h2 style={{ fontSize: "20px", fontWeight: "700", letterSpacing: "-0.5px", margin: 0, color: "var(--color-fg-default)" }}>
+                  Repository Commit Timeline Calendar
+                </h2>
+                <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
+                  A visual overview of commits, merges, and pushes mapped onto a calendar layout.
+                </p>
+              </div>
+
+              {isTimelineLoading ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "32px", backgroundColor: "var(--color-bg-subtle)", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
+                  <div className="spinner"></div>
+                  <span style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>Reading repository Git history records...</span>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1.8fr 1.2fr", gap: "24px", alignItems: "start" }}>
+                  
+                  {/* Left Column: Sleek Calendar Grid */}
+                  <div className="card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+                    
+                    {/* Calendar Month Selector Header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => {
+                            if (calendarMonth === 0) {
+                              setCalendarMonth(11);
+                              setCalendarYear((y) => y - 1);
+                            } else {
+                              setCalendarMonth((m) => m - 1);
+                            }
+                          }}
+                          style={{ padding: "4px 8px" }}
+                        >
+                          &lt;
+                        </button>
+                        
+                        <span style={{ fontSize: "16px", fontWeight: 700, minWidth: "140px", textAlign: "center" }}>
+                          {MONTH_NAMES[calendarMonth]} {calendarYear}
+                        </span>
+
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => {
+                            if (calendarMonth === 11) {
+                              setCalendarMonth(0);
+                              setCalendarYear((y) => y + 1);
+                            } else {
+                              setCalendarMonth((m) => m + 1);
+                            }
+                          }}
+                          style={{ padding: "4px 8px" }}
+                        >
+                          &gt;
+                        </button>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => {
+                            const today = new Date();
+                            setCalendarYear(today.getFullYear());
+                            setCalendarMonth(today.getMonth());
+                          }}
+                          style={{ fontSize: "11px", padding: "4px 10px" }}
+                        >
+                          Today
+                        </button>
+                        
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() => {
+                            if (allCommits.length === 0) return;
+                            const oldest = allCommits[allCommits.length - 1];
+                            if (oldest && oldest.date) {
+                              const d = new Date(oldest.date);
+                              setCalendarYear(d.getFullYear());
+                              setCalendarMonth(d.getMonth());
+                              setSelectedCalendarDate(oldest.date);
+                            }
+                          }}
+                          style={{ fontSize: "11px", padding: "4px 10px" }}
+                          title="Jump to the first commit of the repository"
+                        >
+                          Repo Start ⇤
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Weekday Labels Header */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", borderBottom: "1px solid var(--color-border-default)", paddingBottom: "8px" }}>
+                      {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((dayName) => (
+                        <div key={dayName} style={{ fontSize: "11px", fontWeight: "700", color: "var(--color-fg-muted)" }}>
+                          {dayName}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Grid days */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "8px", minHeight: "280px" }}>
+                      {(() => {
+                        const firstDayIdx = new Date(calendarYear, calendarMonth, 1).getDay();
+                        const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+                        const cells = [];
+
+                        // Empty prefix cells
+                        for (let i = 0; i < firstDayIdx; i++) {
+                          cells.push(<div key={`empty-${i}`} style={{ opacity: 0.15 }}></div>);
+                        }
+
+                        // Day cells
+                        for (let day = 1; day <= daysInMonth; day++) {
+                          const dateString = `${calendarYear}-${String(calendarMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                          const dayCommits = allCommits.filter((c) => c.date === dateString);
+                          const isSelected = selectedCalendarDate === dateString;
+                          const hasCommits = dayCommits.length > 0;
+                          const hasMerges = dayCommits.some((c) => c.isMerge);
+
+                          cells.push(
+                            <div
+                              key={`day-${day}`}
+                              onClick={() => setSelectedCalendarDate(dateString)}
+                              style={{
+                                border: `1px solid ${isSelected ? "var(--color-accent-border)" : "var(--color-border-default)"}`,
+                                borderRadius: "6px",
+                                padding: "8px",
+                                display: "flex",
+                                flexDirection: "column",
+                                justifyContent: "space-between",
+                                minHeight: "56px",
+                                backgroundColor: isSelected
+                                  ? "var(--color-accent-bg)"
+                                  : hasCommits
+                                  ? "rgba(56, 139, 253, 0.05)"
+                                  : "var(--color-bg-overlay)",
+                                cursor: "pointer",
+                                transition: "all 0.15s ease",
+                                position: "relative",
+                              }}
+                            >
+                              <span style={{
+                                fontSize: "12px",
+                                fontWeight: isSelected || hasCommits ? 700 : "normal",
+                                color: isSelected
+                                  ? "var(--color-accent-fg)"
+                                  : hasCommits
+                                  ? "var(--color-fg-default)"
+                                  : "var(--color-fg-muted)",
+                              }}>
+                                {day}
+                              </span>
+
+                              {hasCommits && (
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "4px" }}>
+                                  <span className={`badge ${hasMerges ? "badge-danger" : "badge-success"}`} style={{ fontSize: "9px", padding: "1px 4px" }}>
+                                    {dayCommits.length}
+                                  </span>
+                                  {hasMerges && <span style={{ fontSize: "8px", color: "var(--color-danger-fg)", fontWeight: "bold" }}>🔀</span>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return cells;
+                      })()}
+                    </div>
+                  </div>
+
+                  {/* Right Column: Selected Date Activity Logs */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    
+                    {/* Selected Date Header / Commit details card */}
+                    <div className="card" style={{ padding: "20px", minHeight: "360px", display: "flex", flexDirection: "column" }}>
+                      <div style={{ borderBottom: "1px solid var(--color-border-default)", paddingBottom: "12px", marginBottom: "16px" }}>
+                        <div style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
+                          Timeline Activity Details
+                        </div>
+                        <h3 style={{ fontSize: "16px", fontWeight: 600, marginTop: "4px", color: "var(--color-fg-default)" }}>
+                          {selectedCalendarDate ? (
+                            new Date(selectedCalendarDate).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })
+                          ) : (
+                            "No Date Selected"
+                          )}
+                        </h3>
+                      </div>
+
+                      <div style={{ flex: 1, overflowY: "auto" }}>
+                        {(() => {
+                          if (!selectedCalendarDate) {
+                            return (
+                              <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--color-fg-subtle)", fontStyle: "italic", textAlign: "center", fontSize: "12px", gap: "8px" }}>
+                                <span>📅</span>
+                                <span>Select any cell with green commit badges on the calendar grid to load details.</span>
+                              </div>
+                            );
+                          }
+
+                          const dateCommits = allCommits.filter((c) => c.date === selectedCalendarDate);
+                          if (dateCommits.length === 0) {
+                            return (
+                              <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--color-fg-subtle)", fontStyle: "italic", textAlign: "center", fontSize: "12px" }}>
+                                No commits or repository modifications recorded on this date.
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                              {dateCommits.map((c) => (
+                                <div
+                                  key={c.hash}
+                                  style={{
+                                    border: "1px solid var(--color-border-default)",
+                                    borderRadius: "6px",
+                                    padding: "12px",
+                                    backgroundColor: "rgba(22, 27, 34, 0.4)",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    gap: "6px",
+                                  }}
+                                >
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ fontFamily: "var(--font-mono)", fontSize: "10px", color: "var(--color-accent-fg)", fontWeight: 600 }}>
+                                      {c.hash.slice(0, 7)}
+                                    </span>
+                                    {c.isMerge ? (
+                                      <span className="badge badge-danger" style={{ fontSize: "9px", padding: "1px 4px" }}>Merge</span>
+                                    ) : (
+                                      <span className="badge badge-success" style={{ fontSize: "9px", padding: "1px 4px" }}>Commit</span>
+                                    )}
+                                  </div>
+                                  
+                                  <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--color-fg-default)", lineHeight: "18px" }}>
+                                    {c.subject}
+                                  </div>
+                                  
+                                  <div style={{ fontSize: "11px", color: "var(--color-fg-muted)", display: "flex", justifyContent: "space-between", marginTop: "2px" }}>
+                                    <span>Author: {c.author}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Quick Month Metrics Widget */}
+                    <div className="card" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
+                        Month Performance stats
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginTop: "4px" }}>
+                        <span>Total commits this month:</span>
+                        <strong style={{ color: "var(--color-accent-fg)" }}>
+                          {allCommits.filter((c) => {
+                            const d = new Date(c.date);
+                            return d.getFullYear() === calendarYear && d.getMonth() === calendarMonth;
+                          }).length}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

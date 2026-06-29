@@ -189,3 +189,28 @@ export function parseConflictFile(filePath: string): {
     return { hasConflicts: false, blocks: [], rawLines: [] };
   }
 }
+
+export interface RepoCommit {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
+  isMerge: boolean;
+}
+
+export function getAllRepoCommits(cwd: string): RepoCommit[] {
+  const cmd = `git log --all --pretty=format:"%H|%an|%ad|%s|%P" --date=format:"%Y-%m-%d"`;
+  const output = runGit(cmd, cwd);
+  if (!output) return [];
+
+  return output.split("\n").map((line) => {
+    const parts = line.split("|");
+    const hash = parts[0] || "";
+    const author = parts[1] || "";
+    const date = parts[2] || "";
+    const subject = parts[3] || "";
+    const parents = parts[4] || "";
+    const isMerge = parents.trim().split(/\s+/).length > 1;
+    return { hash, author, date, subject, isMerge };
+  });
+}
