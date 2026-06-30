@@ -1,19 +1,11 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { execSync } from "child_process";
+import { execSync, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
-// Run commands safely and return stdout or error message
-function runCommand(cmd: string, cwd: string): { success: boolean; output: string } {
-  try {
-    const output = execSync(cmd, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
-    return { success: true, output };
-  } catch (error: unknown) {
-    const err = error as { stdout?: string; stderr?: string; message?: string };
-    return { success: false, output: err.stdout || err.stderr || err.message || String(error) };
-  }
-}
+
 
 export async function GET() {
   const profile = await getActiveProfile();
@@ -35,12 +27,22 @@ export async function GET() {
   const missingDeps: string[] = [];
   const packageJsonExists = fs.existsSync(packageJsonPath);
 
+  let projectName = "Unnamed Project";
+  let projectVersion = "1.0.0";
+  let projectDescription = "No description available";
+  let projectLicense = "MIT";
+
   if (packageJsonExists) {
     try {
       const pkgContent = fs.readFileSync(packageJsonPath, "utf-8");
       const pkg = JSON.parse(pkgContent);
       enginesNode = pkg.engines?.node || "*";
       dependencies = { ...pkg.dependencies, ...pkg.devDependencies };
+
+      projectName = pkg.name || projectName;
+      projectVersion = pkg.version || projectVersion;
+      projectDescription = pkg.description || projectDescription;
+      projectLicense = pkg.license || projectLicense;
 
       for (const dep of Object.keys(dependencies)) {
         const depPath = path.join(cwd, "node_modules", dep);
@@ -76,6 +78,21 @@ export async function GET() {
     gitStatus = "Not a Git repository";
   }
 
+  // Fetch OS hostname and username
+  let username = "user";
+  try {
+    username = os.userInfo().username;
+  } catch {
+    username = process.env.USER || "user";
+  }
+
+  let hostname = "localhost";
+  try {
+    hostname = os.hostname().replace(/\.local$/, "");
+  } catch {}
+
+  const folderName = path.basename(cwd);
+
   return NextResponse.json({
     nodeVersion,
     npmVersion,
@@ -85,6 +102,13 @@ export async function GET() {
     totalDependencies: Object.keys(dependencies).length,
     missingDependencies: missingDeps,
     gitStatus,
+    projectName,
+    projectVersion,
+    projectDescription,
+    projectLicense,
+    username,
+    hostname,
+    folderName,
   });
 }
 
@@ -98,32 +122,87 @@ export async function POST(request: Request) {
 
   try {
     const { action } = await request.json();
+    const encoder = new TextEncoder();
+
+    const cmd = "npm";
+    let args: string[] = [];
 
     if (action === "clean-cache") {
-      const res = runCommand("npm cache clean --force", cwd);
-      return NextResponse.json(res);
-    }
-
-    if (action === "clean-modules") {
+      args = ["cache", "clean", "--force"];
+    } else if (action === "clean-modules") {
       const nodeModulesPath = path.join(cwd, "node_modules");
       if (fs.existsSync(nodeModulesPath)) {
-        fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+        try {
+          fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+        } catch {}
       }
-      const res = runCommand("npm install", cwd);
-      return NextResponse.json(res);
+      args = ["install"];
+    } else if (action === "audit-fix") {
+      args = ["audit", "fix", "--force"];
+    } else if (action === "install") {
+      args = ["install"];
+    } else {
+      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
 
-    if (action === "audit-fix") {
-      const res = runCommand("npm audit fix --force", cwd);
-      return NextResponse.json(res);
-    }
+    const customStream = new ReadableStream({
+      async start(controller) {
+        const sendLog = (message: string) => {
+          const clean = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "log", message: clean }) + "\n"));
+        };
 
-    if (action === "install") {
-      const res = runCommand("npm install", cwd);
-      return NextResponse.json(res);
-    }
+        const sendError = (message: string) => {
+          const clean = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: clean }) + "\n"));
+        };
 
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+        const sendSuccess = () => {
+          controller.enqueue(encoder.encode(JSON.stringify({ type: "success" }) + "\n"));
+          controller.close();
+        };
+
+        sendLog(`> Running maintenance command inside ${cwd}:`);
+        sendLog(`> ${cmd} ${args.join(" ")}`);
+
+        const child = spawn(cmd, args, { cwd, shell: true });
+
+        child.stdout?.on("data", (data) => {
+          const lines = data.toString().split("\n");
+          lines.forEach((line: string) => {
+            if (line.trim()) {
+              sendLog(line);
+            }
+          });
+        });
+
+        child.stderr?.on("data", (data) => {
+          const lines = data.toString().split("\n");
+          lines.forEach((line: string) => {
+            if (line.trim()) {
+              sendLog(line);
+            }
+          });
+        });
+
+        child.on("close", (code) => {
+          if (code !== 0) {
+            sendError(`Command failed with exit code ${code}`);
+          } else {
+            sendLog(`> Command completed successfully.`);
+            sendSuccess();
+          }
+        });
+      }
+    });
+
+    return new Response(customStream, {
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: msg }, { status: 500 });

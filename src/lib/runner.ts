@@ -32,7 +32,8 @@ const state = globalRef.runnerState;
 // Append a log line with time stamp
 function appendLog(text: string) {
   const time = new Date().toLocaleTimeString();
-  state.logs.push(`[${time}] ${text}`);
+  const cleanText = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+  state.logs.push(`[${time}] ${cleanText}`);
   // Cap at 1000 lines
   if (state.logs.length > 1000) {
     state.logs.shift();

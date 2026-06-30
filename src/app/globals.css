@@ -1169,3 +1169,34 @@ input, select, textarea, button {
 .feature-icon-bg {
   background-color: var(--color-surface-container-high) !important;
 }
+
+/* Electron drag region helper classes */
+body.electron-app {
+  padding-top: 32px !important;
+}
+
+body.electron-app .electron-drag-bar {
+  display: block !important;
+}
+
+.electron-drag-bar {
+  display: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 32px;
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 99999;
+}
+
+/* Ensure all interactive controls inside Electron window are clickable and don't trigger drag */
+body.electron-app button,
+body.electron-app input,
+body.electron-app select,
+body.electron-app textarea,
+body.electron-app a,
+body.electron-app [role="button"] {
+  -webkit-app-region: no-drag !important;
+}

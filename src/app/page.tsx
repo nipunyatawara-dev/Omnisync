@@ -33,6 +33,13 @@ interface DiagnosticDetails {
   totalDependencies: number;
   missingDependencies: string[];
   gitStatus: string;
+  projectName?: string;
+  projectVersion?: string;
+  projectDescription?: string;
+  projectLicense?: string;
+  username?: string;
+  hostname?: string;
+  folderName?: string;
 }
 
 const MONTH_NAMES = [
@@ -71,6 +78,11 @@ export default function DashboardPage() {
   const [isDiagLoading, setIsDiagLoading] = useState(false);
   const [actionOutput, setActionOutput] = useState<{ success: boolean; output: string } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
+  const [launchOptions, setLaunchOptions] = useState<string[]>([]);
+  const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
+  const [isLiveTerminalActive, setIsLiveTerminalActive] = useState(false);
+  const liveTerminalEndRef = useRef<HTMLDivElement | null>(null);
 
   // Timeline state
   const [allCommits, setAllCommits] = useState<RepoCommit[]>([]);
@@ -150,6 +162,12 @@ export default function DashboardPage() {
   // 1. Fetch Profile details first
   useEffect(() => {
     async function loadProfile() {
+      // Force redirect to setup if no workspace selected this session
+      if (typeof window !== "undefined" && !sessionStorage.getItem("workspace_selected")) {
+        router.push("/setup");
+        return;
+      }
+
       try {
         const res = await fetch("/api/profiles");
         const data = await res.json();
@@ -172,16 +190,116 @@ export default function DashboardPage() {
     loadProfile();
   }, [router]);
 
+
+  // Fetch launch configurations
+  const loadLaunchOptions = async () => {
+    try {
+      const res = await fetch("/api/workspace/launch");
+      const data = await res.json();
+      setLaunchOptions(data.launchOptions || ["browser"]);
+    } catch {
+      setLaunchOptions(["browser"]);
+    }
+  };
+
+  // Auto check diagnostics & trigger installation if needed
+  const checkAndInstallDependencies = async (diagnostics: DiagnosticDetails) => {
+    if (diagnostics.missingDependencies && diagnostics.missingDependencies.length > 0) {
+      setToast({ message: "Auto-installing missing workspace dependencies...", type: "info" });
+      setIsLiveTerminalActive(true);
+      setDiagnosticLogs([]);
+      
+      try {
+        const res = await fetch("/api/workspace/diagnostics", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "install" }),
+        });
+
+        if (!res.ok) throw new Error("Install command failed");
+
+        const reader = res.body?.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const data = JSON.parse(line);
+                if (data.type === "log") {
+                  setDiagnosticLogs((prev) => [...prev, data.message]);
+                } else if (data.type === "error") {
+                  throw new Error(data.message);
+                }
+              } catch {}
+            }
+          }
+        }
+
+        setToast({ message: "Dependencies installed successfully!", type: "success" });
+        setTimeout(() => setToast(null), 4000);
+        
+        // Reload diagnostics after install completes
+        const reloadRes = await fetch("/api/workspace/diagnostics");
+        const reloadData = await reloadRes.json();
+        setDiagData(reloadData as DiagnosticDetails);
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setToast({ message: `Dependency installation failed: ${errMsg}`, type: "error" });
+        setTimeout(() => setToast(null), 5000);
+      } finally {
+        setIsLiveTerminalActive(false);
+      }
+    }
+  };
+
+  const handleLaunchTarget = async (type: string) => {
+    try {
+      await fetch("/api/workspace/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, port: 3000 }),
+      });
+      setToast({
+        message: `Launching ${type === "xcode" ? "Xcode Workspace" : type === "electron" ? "Electron App" : "Local Browser"}...`,
+        type: "success",
+      });
+      setTimeout(() => setToast(null), 3000);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      setToast({ message: `Launch failed: ${errMsg}`, type: "error" });
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
   // 2. Load Workspace details once profile is loaded
   useEffect(() => {
     if (!activeProfile) return;
 
-    Promise.resolve().then(() => {
+    Promise.resolve().then(async () => {
       loadWorkspaceFiles();
       loadGitBranches();
       loadGitSyncStatus();
       loadConflictFiles();
       loadAllCommits();
+      loadLaunchOptions();
+
+      // Fetch diagnostics and check dependencies
+      try {
+        const res = await fetch("/api/workspace/diagnostics");
+        const data = await res.json();
+        setDiagData(data as DiagnosticDetails);
+        checkAndInstallDependencies(data as DiagnosticDetails);
+      } catch {}
     });
   }, [activeProfile]);
 
@@ -369,24 +487,68 @@ export default function DashboardPage() {
     }
   };
 
-  // Run diagnostics maintenance tasks
+
+
+  // Auto scroll live terminal to bottom
+  useEffect(() => {
+    if (liveTerminalEndRef.current) {
+      liveTerminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [diagnosticLogs]);
+
+  // Run diagnostics maintenance tasks with live streaming
   const handleMaintenanceAction = async (action: string) => {
     setIsActionLoading(true);
+    setIsLiveTerminalActive(true);
     setActionOutput(null);
+    setDiagnosticLogs([]);
+
     try {
       const res = await fetch("/api/workspace/diagnostics", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
-      const data = await res.json();
-      setActionOutput(data as { success: boolean; output: string });
+
+      if (!res.ok) {
+        throw new Error("Maintenance action failed");
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.type === "log") {
+                setDiagnosticLogs((prev) => [...prev, data.message]);
+              } else if (data.type === "error") {
+                throw new Error(data.message);
+              }
+            } catch {}
+          }
+        }
+      }
+
+      setActionOutput({ success: true, output: "Command completed successfully." });
       loadDiagnostics();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setActionOutput({ success: false, output: msg });
     } finally {
       setIsActionLoading(false);
+      setIsLiveTerminalActive(false);
     }
   };
 
@@ -403,15 +565,39 @@ export default function DashboardPage() {
 
   return (
     <div className="app-container">
+      {/* Toast Notification */}
+      {toast && (
+        <div className="fixed top-md right-md z-[99999] animate-fade-slide pointer-events-none select-none">
+          <div className={`p-md rounded-xl border shadow-xl flex items-center gap-sm bg-[#161b22] ${
+            toast.type === "success"
+              ? "border-[#3fb950]/50 text-[#3fb950]"
+              : toast.type === "error"
+              ? "border-[#f85149]/50 text-[#f85149]"
+              : "border-[#58a6ff]/50 text-[#58a6ff]"
+          }`}>
+            {toast.type === "info" && (
+              <div className="w-4 h-4 border-2 border-[#58a6ff]/20 border-t-[#58a6ff] rounded-full animate-spin shrink-0"></div>
+            )}
+            {toast.type === "success" && (
+              <span className="material-symbols-outlined text-[18px] text-[#3fb950] shrink-0">check_circle</span>
+            )}
+            {toast.type === "error" && (
+              <span className="material-symbols-outlined text-[18px] text-[#f85149] shrink-0">error</span>
+            )}
+            <span className="font-button-text font-semibold text-[13px]">{toast.message}</span>
+          </div>
+        </div>
+      )}
+
       {/* Top Banner Header */}
       <header className="header">
         <div className="header-brand">
           <svg height="20" viewBox="0 0 24 24" width="20" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l.73-2.79" />
           </svg>
-          <span style={{ fontSize: "14px", fontWeight: "600" }}>OmniSync Workspace</span>
-          <span className="badge badge-info" style={{ fontSize: "10px", marginLeft: "4px" }}>
-            {activeProfile?.workspaceType === "automatic" ? "Auto Setup" : "Manual Repo"}
+          <span style={{ fontSize: "14px", fontWeight: "600" }}>{activeProfile?.name || "OmniSync Workspace"}</span>
+          <span className={`badge ${activeProfile?.gitToken ? "badge-success" : "badge-info"}`} style={{ fontSize: "10px", marginLeft: "4px" }}>
+            {activeProfile?.gitToken ? "GitHub Connected" : "Local Only"}
           </span>
         </div>
 
@@ -534,11 +720,82 @@ export default function DashboardPage() {
                     )}
                   </button>
 
-                  <div style={{ fontSize: "12px", color: "var(--color-fg-muted)" }}>
+                  <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", display: "flex", alignItems: "center", gap: "8px" }}>
                     {runnerStatus?.status === "running" && <span style={{ color: "var(--color-success-fg)", fontWeight: 600 }}>Active (PID: {runnerStatus?.pid})</span>}
                     {runnerStatus?.status === "starting" && <span style={{ color: "var(--color-attention-fg)" }}>Starting...</span>}
                     {runnerStatus?.status === "stopped" && <span>Dev Server Stopped</span>}
                     {runnerStatus?.status === "error" && <span style={{ color: "var(--color-danger-fg)" }}>Error: {runnerStatus?.error}</span>}
+
+                    {runnerStatus?.status === "running" && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "8px" }}>
+                        {launchOptions.includes("browser") && (
+                          <button
+                            type="button"
+                            onClick={() => handleLaunchTarget("browser")}
+                            className="btn btn-sm"
+                            style={{
+                              backgroundColor: "rgba(56, 139, 253, 0.15)",
+                              borderColor: "rgba(56, 139, 253, 0.4)",
+                              color: "var(--color-accent-fg)",
+                              fontWeight: 650,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "2px 8px",
+                              fontSize: "11px",
+                              height: "26px"
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>open_in_new</span>
+                            Launch Browser
+                          </button>
+                        )}
+                        {launchOptions.includes("electron") && (
+                          <button
+                            type="button"
+                            onClick={() => handleLaunchTarget("electron")}
+                            className="btn btn-sm"
+                            style={{
+                              backgroundColor: "rgba(63, 185, 80, 0.15)",
+                              borderColor: "rgba(63, 185, 80, 0.4)",
+                              color: "var(--color-success-fg)",
+                              fontWeight: 650,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "2px 8px",
+                              fontSize: "11px",
+                              height: "26px"
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>devices</span>
+                            Launch Electron App
+                          </button>
+                        )}
+                        {launchOptions.includes("xcode") && (
+                          <button
+                            type="button"
+                            onClick={() => handleLaunchTarget("xcode")}
+                            className="btn btn-sm"
+                            style={{
+                              backgroundColor: "rgba(210, 153, 34, 0.15)",
+                              borderColor: "rgba(210, 153, 34, 0.4)",
+                              color: "var(--color-attention-fg)",
+                              fontWeight: 650,
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "4px",
+                              padding: "2px 8px",
+                              fontSize: "11px",
+                              height: "26px"
+                            }}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>terminal</span>
+                            Open Xcode
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1150,7 +1407,47 @@ export default function DashboardPage() {
                           color: "#8b949e",
                           maxHeight: "280px",
                         }}>
-                          {actionOutput ? (
+                          {isLiveTerminalActive ? (
+                            <div>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
+                                <span style={{ color: "var(--color-fg-muted)" }}>live_terminal_stream.log</span>
+                                <span className="badge badge-warning animate-pulse" style={{ color: "var(--color-attention-fg)", borderColor: "var(--color-attention-border)" }}>Running...</span>
+                              </div>
+                              <pre style={{
+                                margin: 0,
+                                fontFamily: "var(--font-mono)",
+                                fontSize: "11px",
+                                color: "#3fb950",
+                                whiteSpace: "pre-wrap",
+                              }}>
+                                {diagnosticLogs.map((log, idx) => (
+                                  <div key={idx}>{log}</div>
+                                ))}
+                              </pre>
+                              <div ref={liveTerminalEndRef} />
+                            </div>
+                          ) : (runnerStatus?.status === "running" || runnerStatus?.status === "starting") ? (
+                            <div>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
+                                <span style={{ color: "var(--color-fg-muted)" }}>dev_server_stream.log</span>
+                                <span className="badge badge-success animate-pulse" style={{ color: "var(--color-success-fg)", borderColor: "var(--color-success-border)" }}>
+                                  {runnerStatus.status === "starting" ? "Starting..." : "Running"}
+                                </span>
+                              </div>
+                              <pre style={{
+                                margin: 0,
+                                fontFamily: "var(--font-mono)",
+                                fontSize: "11px",
+                                color: "#e6edf3",
+                                whiteSpace: "pre-wrap",
+                              }}>
+                                <div className="mb-xs" style={{ color: "#3fb950" }}>{diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} % npm run dev` : "shockagg@Nipuns-MacBook-Air OmniSync % npm run dev"}</div>
+                                {runnerLogs.map((log, idx) => (
+                                  <div key={idx} style={{ color: log.includes("[ERROR]") ? "var(--color-danger-fg)" : "#8b949e" }}>{log}</div>
+                                ))}
+                              </pre>
+                            </div>
+                          ) : actionOutput ? (
                             <div>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
                                 <span style={{ color: "var(--color-fg-muted)" }}>terminal_stream.log</span>
@@ -1169,12 +1466,31 @@ export default function DashboardPage() {
                               </pre>
                             </div>
                           ) : (
-                            <div style={{ color: "var(--color-fg-subtle)", fontStyle: "italic", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px" }}>
-                              $ compiler terminal ready. Select a maintenance command to view console output.
+                            <div style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "#8b949e", textAlign: "left" }}>
+                              <div>{diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} %` : "shockagg@Nipuns-MacBook-Air OmniSync %"}</div>
                             </div>
                           )}
                         </div>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Project Specifications Card */}
+                  <div className="card" style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "12px", background: "rgba(22, 27, 34, 0.2)", border: "1px solid var(--color-border-default)" }}>
+                    <div style={{ fontSize: "11px", color: "var(--color-fg-muted)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px" }}>Project Specifications</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Project Name</div>
+                        <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--color-fg-default)", marginTop: "2px" }}>{diagData.projectName || "Unnamed Project"}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Version & License</div>
+                        <div style={{ fontSize: "14px", fontWeight: "600", color: "var(--color-fg-default)", marginTop: "2px" }}>v{diagData.projectVersion || "1.0.0"} ({diagData.projectLicense || "MIT"})</div>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Description</div>
+                      <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", marginTop: "2px", lineHeight: "1.4" }}>{diagData.projectDescription || "No description available in package.json."}</div>
                     </div>
                   </div>
                 </div>
@@ -1372,8 +1688,22 @@ export default function DashboardPage() {
                   </div>
 
                   {/* Right Column: Selected Date Activity Logs */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>                    {/* Quick Month Metrics Widget */}
+                    <div className="card" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
+                        Month Performance stats
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginTop: "4px" }}>
+                        <span>Total commits this month:</span>
+                        <strong style={{ color: "var(--color-accent-fg)" }}>
+                          {allCommits.filter((c) => {
+                            const d = new Date(c.date);
+                            return d.getFullYear() === calendarYear && d.getMonth() === calendarMonth;
+                          }).length}
+                        </strong>
+                      </div>
+                    </div>
+
                     {/* Selected Date Header / Commit details card */}
                     <div className="card" style={{ padding: "20px", minHeight: "360px", display: "flex", flexDirection: "column" }}>
                       <div style={{ borderBottom: "1px solid var(--color-border-default)", paddingBottom: "12px", marginBottom: "16px" }}>
@@ -1447,22 +1777,6 @@ export default function DashboardPage() {
                             </div>
                           );
                         })()}
-                      </div>
-                    </div>
-
-                    {/* Quick Month Metrics Widget */}
-                    <div className="card" style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <div style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
-                        Month Performance stats
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", marginTop: "4px" }}>
-                        <span>Total commits this month:</span>
-                        <strong style={{ color: "var(--color-accent-fg)" }}>
-                          {allCommits.filter((c) => {
-                            const d = new Date(c.date);
-                            return d.getFullYear() === calendarYear && d.getMonth() === calendarMonth;
-                          }).length}
-                        </strong>
                       </div>
                     </div>
                   </div>

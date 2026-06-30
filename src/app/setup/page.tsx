@@ -4,6 +4,14 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter as useAppRouter } from "next/navigation";
 import { UserProfile } from "@/lib/profiles";
 
+declare global {
+  interface Window {
+    electron?: {
+      selectDirectory: () => Promise<string | null>;
+    };
+  }
+}
+
 interface DiagnosticScanResult {
   nodeVersion: string;
   npmVersion: string;
@@ -154,6 +162,11 @@ export default function SetupPage() {
           
           setGitUsername(data.username);
           setGitToken(data.token);
+          fetchGithubUserDetail(data.token);
+          if (typeof window !== "undefined") {
+            localStorage.setItem("omnisync_git_token", data.token);
+            localStorage.setItem("omnisync_git_username", data.username);
+          }
           setManualPath(process.cwd());
           
           await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -200,6 +213,270 @@ export default function SetupPage() {
   const [manualScanResult, setManualScanResult] = useState<DiagnosticScanResult | null>(null);
   const [manualError, setManualError] = useState("");
 
+  // Cloning setup state
+  interface UIRepository {
+    id: number;
+    name: string;
+    fullName: string;
+    description: string | null;
+    cloneUrl: string;
+    private: boolean;
+    owner: string;
+  }
+
+  const [setupMode, setSetupMode] = useState<"clone" | "local">("clone");
+  const [reposList, setReposList] = useState<UIRepository[]>([]);
+  const [selectedRepoId, setSelectedRepoId] = useState("");
+  const [isRepoDropdownOpen, setIsRepoDropdownOpen] = useState(false);
+  const [isFetchingRepos, setIsFetchingRepos] = useState(false);
+  const [clonePath, setClonePath] = useState("");
+  const [cloneStatus, setCloneStatus] = useState<"idle" | "cloning" | "success" | "error">("idle");
+  const [cloneError, setCloneError] = useState("");
+  const [cloneLogs, setCloneLogs] = useState<string[]>([]);
+  const [githubUserDetail, setGithubUserDetail] = useState<{
+    avatarUrl: string;
+    htmlUrl: string;
+    name: string;
+    bio: string;
+    publicRepos: number;
+    login: string;
+  } | null>(null);
+  const terminalEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Auto scroll terminal to bottom as logs append
+  useEffect(() => {
+    if (terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [cloneLogs]);
+
+  // Fetch remote repositories asynchronously when entering Step 3
+  useEffect(() => {
+    let active = true;
+    if (step === "repo-selection") {
+      Promise.resolve().then(() => {
+        if (!active) return;
+        if (gitToken) {
+          setSetupMode("clone");
+          setIsFetchingRepos(true);
+          fetch("/api/github/repos", {
+            headers: { Authorization: `Bearer ${gitToken}` },
+          })
+            .then((res) => res.json())
+            .then((data) => {
+              if (!active) return;
+              if (data.repos) {
+                setReposList(data.repos as UIRepository[]);
+                if (data.repos.length > 0) {
+                  setSelectedRepoId(data.repos[0].id.toString());
+                  setClonePath(`/Users/username/Documents/GitHub/${data.repos[0].name}`);
+                }
+              } else {
+                setReposList([]);
+              }
+              setIsFetchingRepos(false);
+            })
+            .catch((err) => {
+              console.error(err);
+              if (active) {
+                setReposList([]);
+                setIsFetchingRepos(false);
+              }
+            });
+        } else {
+          setSetupMode("local");
+        }
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [step, gitToken]);
+
+  // Handle repository selection change to update default clone path
+  const handleRepoChange = (repoId: string) => {
+    setSelectedRepoId(repoId);
+    setCloneError("");
+    setCloneStatus("idle");
+    const repo = reposList.find((r) => r.id.toString() === repoId);
+    if (repo) {
+      const defaultParent = clonePath ? clonePath.substring(0, clonePath.lastIndexOf("/")) : "/Users/username/Documents/GitHub";
+      setClonePath(`${defaultParent}/${repo.name}`);
+    }
+  };
+
+  // Open native directory select dialog in Electron
+  const handleChooseClonePath = async () => {
+    if (typeof window !== "undefined" && window.electron) {
+      const selected = await window.electron.selectDirectory();
+      if (selected) {
+        setClonePath(selected);
+        setCloneError("");
+        setCloneStatus("idle");
+      }
+    }
+  };
+
+  const handleChooseManualPath = async () => {
+    if (typeof window !== "undefined" && window.electron) {
+      const selected = await window.electron.selectDirectory();
+      if (selected) {
+        setManualPath(selected);
+        setManualError("");
+        setManualStatus("idle");
+      }
+    }
+  };
+
+  // Perform git clone and initialize profile workspace
+  const runCloneAndSetup = async () => {
+    if (!selectedRepoId) {
+      setCloneError("Please select a repository to clone");
+      return;
+    }
+    const repo = reposList.find((r) => r.id.toString() === selectedRepoId);
+    if (!repo) return;
+
+    if (!clonePath) {
+      setCloneError("Please specify a directory path to clone into");
+      return;
+    }
+
+    setCloneStatus("cloning");
+    setCloneError("");
+    setCloneLogs([]);
+
+    try {
+      // 1. Start streaming clone process
+      const cloneRes = await fetch("/api/github/clone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cloneUrl: repo.cloneUrl,
+          localPath: clonePath,
+          token: gitToken,
+        }),
+      });
+
+      if (!cloneRes.ok) {
+        const errText = await cloneRes.text();
+        let errMsg = "Failed to clone repository";
+        try {
+          const errData = JSON.parse(errText);
+          errMsg = errData.error || errMsg;
+        } catch {
+          errMsg = errText || errMsg;
+        }
+        throw new Error(errMsg);
+      }
+
+      if (!cloneRes.body) {
+        throw new Error("No output stream received from server.");
+      }
+
+      const reader = cloneRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.type === "log") {
+              setCloneLogs((prev) => [...prev, data.message]);
+            } else if (data.type === "error") {
+              throw new Error(data.message);
+            }
+          } catch {
+            // Ignore partial JSON lines
+          }
+        }
+      }
+
+      setCloneLogs((prev) => [...prev, "> Starting workspace database configuration..."]);
+
+      // 2. Create workspace profile
+      const workspaceRecordName = repoName || repo.name;
+      const profRes = await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          name: workspaceRecordName,
+          profession: "Developer Workspace",
+          gitToken,
+        }),
+      });
+
+      const profData = await profRes.json();
+      if (!profData.success) {
+        throw new Error(profData.error || "Failed to initialize workspace record");
+      }
+
+      const newProfile = profData.profile as UserProfile;
+
+      // 3. Update workspace path and type
+      await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update",
+          id: newProfile.id,
+          updates: {
+            workspacePath: clonePath,
+            workspaceType: "automatic",
+          },
+        }),
+      });
+
+      // 4. Scan diagnostics
+      const diagRes = await fetch("/api/workspace/diagnostics");
+      const diagData = await diagRes.json();
+
+      if (diagData.error) {
+        throw new Error(diagData.error);
+      }
+
+      setManualScanResult(diagData as DiagnosticScanResult);
+      setManualStatus("success"); // reuse status view for launch
+      setCloneStatus("success");
+    } catch (err: unknown) {
+      setCloneStatus("error");
+      setCloneError(err instanceof Error ? err.message : "Failed to clone and setup workspace.");
+    }
+  };
+
+  // Fetch logged in GitHub user details
+  const fetchGithubUserDetail = async (token: string) => {
+    if (!token) return;
+    try {
+      const res = await fetch("https://api.github.com/user", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGithubUserDetail({
+          avatarUrl: data.avatar_url,
+          htmlUrl: data.html_url,
+          name: data.name || data.login,
+          bio: data.bio || "Active developer profile",
+          publicRepos: data.public_repos,
+          login: data.login,
+        });
+      }
+    } catch (e) {
+      console.error("Failed to fetch GitHub user details", e);
+    }
+  };
+
   // Fetch all profiles
   const loadProfiles = async () => {
     try {
@@ -207,6 +484,15 @@ export default function SetupPage() {
       const data = await res.json();
       const profiles = data.profiles || [];
       setProfilesList(profiles);
+
+      // Auto-restore git token from existing profiles if present
+      const profileWithToken = profiles.find((p: UserProfile) => p.gitToken);
+      if (profileWithToken && profileWithToken.gitToken) {
+        setGitToken(profileWithToken.gitToken);
+        setGitUsername(profileWithToken.name);
+        fetchGithubUserDetail(profileWithToken.gitToken);
+      }
+
       if (profiles.length > 0) {
         setStep("profile-selection");
       } else if (data.activeProfileId) {
@@ -217,6 +503,16 @@ export default function SetupPage() {
 
   useEffect(() => {
     Promise.resolve().then(() => {
+      if (typeof window !== "undefined") {
+        const savedToken = localStorage.getItem("omnisync_git_token");
+        const savedUsername = localStorage.getItem("omnisync_git_username");
+        if (savedToken) {
+          setGitToken(savedToken);
+          setStep("profile-selection");
+          fetchGithubUserDetail(savedToken);
+        }
+        if (savedUsername) setGitUsername(savedUsername);
+      }
       loadProfiles();
       checkOauthConfig();
     });
@@ -232,6 +528,7 @@ export default function SetupPage() {
           setGitToken(token);
           setManualPath(process.cwd());
           setStep("profile-selection");
+          fetchGithubUserDetail(token);
         });
         // Clean URL
         window.history.replaceState({}, document.title, window.location.pathname);
@@ -263,6 +560,9 @@ export default function SetupPage() {
       });
       const data = await res.json();
       if (data.success) {
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem("workspace_selected", "true");
+        }
         router.push("/");
       } else {
         alert(`Error selecting workspace: ${data.error}`);
@@ -335,6 +635,9 @@ export default function SetupPage() {
   };
 
   const handleLaunchManual = () => {
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("workspace_selected", "true");
+    }
     router.push("/");
   };
 
@@ -401,7 +704,7 @@ export default function SetupPage() {
 
       {/* Right Column: Dynamic Content Panel */}
       <div className="w-full flex-1 p-xl bg-background flex flex-col items-center justify-center overflow-y-auto">
-        <div className={`w-full ${step === "profile-selection" ? "max-w-[640px]" : "max-w-[500px]"} animate-fade-slide`}>
+        <div className={`w-full ${step === "profile-selection" || step === "repo-selection" ? "max-w-[640px]" : "max-w-[500px]"} animate-fade-slide`}>
           
           {/* STEP 1: GITHUB LOGIN */}
           {step === "login" && (
@@ -594,12 +897,53 @@ export default function SetupPage() {
           {/* STEP 2: WORKSPACE PROFILE SELECTION */}
           {step === "profile-selection" && (
             <div>
-              <div className="mb-lg">
+               <div className="mb-lg">
                 <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">Select Workspace</h2>
                 <p className="font-body-lg text-body-lg text-on-surface-variant">
                   Choose a previously set up repository workspace or initialize a new one.
                 </p>
               </div>
+
+              {/* GitHub Connected Account Card */}
+              {githubUserDetail && (
+                <div className="flex items-center gap-md p-md bg-[#161b22] border border-outline-variant rounded-xl mb-lg animate-fade-in justify-between">
+                  <div className="flex items-center gap-md">
+                    {/* Avatar */}
+                    {githubUserDetail.avatarUrl ? (
+                      <img
+                        src={githubUserDetail.avatarUrl}
+                        alt={githubUserDetail.name}
+                        className="w-12 h-12 rounded-full border border-outline-variant shadow-sm"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 rounded-full bg-accent-bg text-secondary-container flex items-center justify-center font-bold text-lg">
+                        🐱
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-xs">
+                        <span className="font-button-text text-on-surface font-semibold text-[14px]">
+                          {githubUserDetail.name}
+                        </span>
+                        <span className="text-xs text-on-surface-variant font-mono">
+                          @{githubUserDetail.login}
+                        </span>
+                      </div>
+                      <p className="text-[12px] text-on-surface-variant leading-normal mt-[2px] truncate max-w-[320px] md:max-w-[420px]">
+                        {githubUserDetail.bio}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-[2px] shrink-0 text-right">
+                    <span className="badge badge-success text-[10px] font-semibold tracking-wide uppercase px-sm py-[2px] mb-xs">
+                      GitHub Linked
+                    </span>
+                    <span className="text-[11px] text-on-surface-variant font-medium">
+                      {githubUserDetail.publicRepos} public repos
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-md mb-xl">
                 {profilesList.map((p) => (
@@ -632,6 +976,10 @@ export default function SetupPage() {
                   onClick={() => {
                     setStep("repo-selection");
                     setRepoName("");
+                    setCloneStatus("idle");
+                    setCloneError("");
+                    setCloneLogs([]);
+                    setManualScanResult(null);
                   }}
                   className="border-2 border-dashed border-outline-variant rounded-xl p-md flex flex-col items-center justify-center min-h-[140px] cursor-pointer hover:border-secondary-container hover:bg-surface-container/30 transition-all duration-200"
                 >
@@ -651,6 +999,12 @@ export default function SetupPage() {
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ action: "select", id: null }),
                     });
+                    if (typeof window !== "undefined") {
+                      localStorage.removeItem("omnisync_git_token");
+                      localStorage.removeItem("omnisync_git_username");
+                    }
+                    setGitToken("");
+                    setGitUsername("");
                     setStep("login");
                   }}
                   className="btn-secondary rounded-lg py-sm px-md font-button-text text-button-text text-error hover:bg-error-container/10 border border-error/20 transition-colors cursor-pointer"
@@ -665,106 +1019,371 @@ export default function SetupPage() {
           {step === "repo-selection" && (
             <div>
               <div className="mb-lg">
-                <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">Link Local Repository</h2>
+                <h2 className="font-headline-lg text-headline-lg text-on-surface mb-xs">
+                  {setupMode === "clone" ? "Clone GitHub Repository" : "Link Local Repository"}
+                </h2>
                 <p className="font-body-lg text-body-lg text-on-surface-variant">
-                  Point OmniSync directly to an already created repository on this machine.
+                  {setupMode === "clone"
+                    ? "Clone a repository from your GitHub account and prepare a local workspace."
+                    : "Point OmniSync directly to an already created repository on this machine."}
                 </p>
               </div>
 
-              <div className="border border-outline-variant rounded-xl p-lg bg-surface-container">
-                <h3 className="font-headline-sm text-on-surface mb-xs">Link Local Repository</h3>
-                <p className="font-body-md text-[13px] text-on-surface-variant mb-lg">
-                  Provide the directory path of an existing repository already created on your device.
-                </p>
-
-                <div className="mb-lg">
-                  <label className="block font-button-text text-button-text text-on-surface mb-sm">
-                    Pre-existing Folder Path
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full input-surface rounded-md px-md py-sm text-on-surface font-body-md transition-shadow"
-                    value={manualPath}
-                    onChange={(e) => setManualPath(e.target.value)}
-                    placeholder="/Users/username/Documents/GitHub/project"
-                    required
-                  />
-                  <p className="font-body-md text-[11px] text-on-surface-variant mt-xs">
-                    OmniSync will verify this path, scan its Node compatibility, and configure logs.
-                  </p>
-                </div>
-
-                {manualStatus === "idle" && (
+              {/* Tab Switcher if token is available */}
+              {gitToken && (
+                <div className="flex bg-surface-container-high p-xs rounded-xl mb-lg w-full max-w-[340px] border border-outline-variant/30 gap-xs">
                   <button
                     type="button"
-                    className="w-full btn-primary rounded-lg py-md px-md font-button-text text-button-text transition-colors cursor-pointer font-semibold"
-                    onClick={runManualScan}
+                    onClick={() => {
+                      setSetupMode("clone");
+                      setManualError("");
+                      setCloneError("");
+                    }}
+                    className={`flex-1 flex justify-center items-center py-sm rounded-lg font-button-text font-semibold text-[13px] transition-all cursor-pointer border-0 ${
+                      setupMode === "clone"
+                        ? "bg-primary text-on-primary shadow-sm"
+                        : "bg-transparent text-on-surface-variant hover:text-on-surface"
+                    }`}
                   >
-                    Verify &amp; Scan Directory
+                    Clone from GitHub
                   </button>
-                )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSetupMode("local");
+                      setManualError("");
+                      setCloneError("");
+                    }}
+                    className={`flex-1 flex justify-center items-center py-sm rounded-lg font-button-text font-semibold text-[13px] transition-all cursor-pointer border-0 ${
+                      setupMode === "local"
+                        ? "bg-primary text-on-primary shadow-sm"
+                        : "bg-transparent text-on-surface-variant hover:text-on-surface"
+                    }`}
+                  >
+                    Link Local Folder
+                  </button>
+                </div>
+              )}
 
-                {manualStatus === "scanning" && (
-                  <div className="flex items-center gap-sm p-md bg-surface rounded-lg border border-outline-variant">
-                    <div className="spinner"></div>
-                    <span className="text-[13px] text-on-surface-variant">
-                      Analyzing node compatibility levels and package.json configurations...
-                    </span>
-                  </div>
-                )}
-
-                {manualStatus === "success" && manualScanResult && (
-                  <div className="flex flex-col gap-md mt-md">
-                    <div className="flash flash-success m-0 py-sm px-md text-[12px]">
-                      Workspace verified successfully. Click below to launch.
+              {/* CLONE MODE CONTENT */}
+              {setupMode === "clone" && gitToken && (
+                <div>
+                  {isFetchingRepos ? (
+                    <div className="flex flex-col items-center justify-center py-xl gap-sm border border-outline-variant rounded-xl bg-surface-container/50">
+                      <div className="w-8 h-8 border-3 border-[#58a6ff]/10 border-t-[#58a6ff] rounded-full animate-spin"></div>
+                      <span className="text-[13px] text-on-surface-variant">Fetching your GitHub repositories...</span>
                     </div>
+                  ) : reposList.length === 0 ? (
+                    <div className="py-xl text-center text-on-surface-variant text-[14px] border border-outline-variant rounded-xl bg-surface-container/50">
+                      No repositories found. Make sure your account has accessible repositories.
+                    </div>
+                  ) : (
+                    <div className="border border-outline-variant rounded-xl p-lg bg-surface-container">
+                      <h3 className="font-headline-sm text-on-surface mb-xs">Clone Remote Repository</h3>
+                      <p className="font-body-md text-[13px] text-on-surface-variant mb-lg">
+                        Select a repository and choose where to save the files on this computer.
+                      </p>
 
-                    <table className="w-full border-collapse text-[12px] text-on-surface">
-                      <tbody>
-                        <tr className="border-b border-outline-variant">
-                          <td className="py-sm text-on-surface-variant">Node.js Compatibility</td>
-                          <td className="py-sm text-right">
-                            {manualScanResult.isNodeCompatible ? (
-                              <span className="badge badge-success">Compatible ({manualScanResult.nodeVersion})</span>
-                            ) : (
-                              <span className="badge badge-danger">Incompatible ({manualScanResult.nodeVersion})</span>
-                            )}
-                          </td>
-                        </tr>
-                        <tr className="border-b border-outline-variant">
-                          <td className="py-sm text-on-surface-variant">Dependencies Checked</td>
-                          <td className="py-sm text-right font-medium">
-                            {manualScanResult.missingDependencies.length === 0
-                              ? "All verified"
-                              : `${manualScanResult.missingDependencies.length} missing`}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
+                      <div className="mb-lg relative">
+                        <label className="block font-button-text text-button-text text-on-surface mb-sm">
+                          Repository
+                        </label>
+                        
+                        {/* Custom Dropdown Trigger */}
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setIsRepoDropdownOpen(!isRepoDropdownOpen)}
+                            disabled={cloneStatus === "cloning" || cloneStatus === "success"}
+                            className="w-full input-surface rounded-md px-md py-sm text-on-surface font-body-md bg-background border border-outline-variant flex justify-between items-center cursor-pointer select-none text-left min-h-[38px] disabled:cursor-not-allowed"
+                          >
+                            {(() => {
+                              const selectedRepo = reposList.find(r => r.id.toString() === selectedRepoId);
+                              if (!selectedRepo) return <span className="text-on-surface-variant">Select a repository</span>;
+                              return (
+                                <span className="flex items-center gap-xs truncate">
+                                  <span className="material-symbols-outlined text-[16px] text-on-surface-variant shrink-0">
+                                    {selectedRepo.private ? "lock" : "public"}
+                                  </span>
+                                  <span className="truncate">{selectedRepo.fullName}</span>
+                                </span>
+                              );
+                            })()}
+                            {/* Positioned slightly left as requested */}
+                            <span className="material-symbols-outlined text-on-surface-variant text-[18px] mr-xs shrink-0">
+                              keyboard_arrow_down
+                            </span>
+                          </button>
+                          
+                          {/* Dropdown Options Overlay */}
+                          {isRepoDropdownOpen && (
+                            <>
+                              {/* Invisible Backdrop to close dropdown */}
+                              <div
+                                className="fixed inset-0 z-10"
+                                onClick={() => setIsRepoDropdownOpen(false)}
+                              />
+                              <div className="absolute left-0 right-0 mt-xs bg-surface-container border border-outline-variant rounded-lg shadow-xl max-h-[220px] overflow-y-auto z-20 p-xs flex flex-col gap-[2px]">
+                                {reposList.map((repo) => {
+                                  const isSelected = repo.id.toString() === selectedRepoId;
+                                  return (
+                                    <button
+                                      key={repo.id}
+                                      type="button"
+                                      onClick={() => {
+                                        handleRepoChange(repo.id.toString());
+                                        setIsRepoDropdownOpen(false);
+                                      }}
+                                      className={`w-full flex items-center justify-between px-md py-sm rounded-md font-body-md text-left transition-colors cursor-pointer border-0 ${
+                                        isSelected
+                                          ? "bg-accent-bg text-accent-fg font-semibold"
+                                          : "bg-transparent text-on-surface hover:bg-surface-container-high"
+                                      }`}
+                                    >
+                                      <span className="flex items-center gap-xs truncate">
+                                        <span className={`material-symbols-outlined text-[16px] shrink-0 ${isSelected ? "text-accent-fg" : "text-on-surface-variant"}`}>
+                                          {repo.private ? "lock" : "public"}
+                                        </span>
+                                        <span className="truncate">{repo.fullName}</span>
+                                      </span>
+                                      {isSelected && (
+                                        <span className="material-symbols-outlined text-[16px] text-accent-fg shrink-0">
+                                          check
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
 
+                      <div className="mb-lg">
+                        <label className="block font-button-text text-button-text text-on-surface mb-sm" htmlFor="clone-path">
+                          Local Target Folder Path
+                        </label>
+                        <div className="flex gap-sm items-center">
+                          <input
+                            id="clone-path"
+                            type="text"
+                            className="flex-grow input-surface rounded-md px-md py-sm text-on-surface font-body-md transition-shadow"
+                            value={clonePath}
+                            onChange={(e) => {
+                              setClonePath(e.target.value);
+                              setCloneError("");
+                              setCloneStatus("idle");
+                            }}
+                            placeholder="/Users/username/Documents/GitHub/project"
+                            required
+                            disabled={cloneStatus === "cloning" || cloneStatus === "success"}
+                          />
+                          {typeof window !== "undefined" && window.electron && (
+                            <button
+                              type="button"
+                              onClick={handleChooseClonePath}
+                              disabled={cloneStatus === "cloning" || cloneStatus === "success"}
+                              className="btn-secondary rounded-lg py-sm px-md shrink-0 flex items-center font-semibold text-xs h-[38px] cursor-pointer"
+                            >
+                              Browse...
+                            </button>
+                          )}
+                        </div>
+                        <p className="font-body-md text-[11px] text-on-surface-variant mt-xs">
+                          Choose an empty or new folder location. Parent directory will be created if needed.
+                        </p>
+                      </div>
+
+                      {(cloneStatus === "idle" || cloneStatus === "error") && (
+                        <button
+                          type="button"
+                          className="w-full btn-primary rounded-lg py-md px-md font-button-text text-button-text transition-colors cursor-pointer font-semibold"
+                          onClick={runCloneAndSetup}
+                        >
+                          Clone &amp; Setup Workspace
+                        </button>
+                      )}
+
+                      {cloneStatus === "cloning" && (
+                        <div className="flex flex-col gap-md mt-md">
+                          <div className="flex items-center gap-sm p-sm bg-surface-container rounded-lg border border-outline-variant/60">
+                            <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                            <span className="text-[13px] text-on-surface font-medium">
+                              Cloning repository &amp; configuring diagnostics...
+                            </span>
+                          </div>
+                          
+                          <div className="bg-[#090d13] border border-outline-variant rounded-lg p-md font-mono text-[11px] text-[#3fb950] h-[220px] overflow-y-auto flex flex-col gap-[3px] select-text scrollbar-thin">
+                            {cloneLogs.map((log, idx) => (
+                              <div key={idx} className="leading-relaxed whitespace-pre-wrap">{log}</div>
+                            ))}
+                            <div ref={terminalEndRef} />
+                          </div>
+                        </div>
+                      )}
+
+                      {cloneStatus === "success" && manualScanResult && (
+                        <div className="flex flex-col gap-md mt-md animate-fade-in">
+                          <div className="flash flash-success m-0 py-sm px-md text-[12px] rounded">
+                            Workspace cloned and verified successfully. Click below to launch.
+                          </div>
+
+                          <table className="w-full border-collapse text-[12px] text-on-surface">
+                            <tbody>
+                              <tr className="border-b border-outline-variant">
+                                <td className="py-sm text-on-surface-variant">Node.js Compatibility</td>
+                                <td className="py-sm text-right">
+                                  {manualScanResult.isNodeCompatible ? (
+                                    <span className="badge badge-success">Compatible ({manualScanResult.nodeVersion})</span>
+                                  ) : (
+                                    <span className="badge badge-danger">Incompatible ({manualScanResult.nodeVersion})</span>
+                                  )}
+                                </td>
+                              </tr>
+                              <tr className="border-b border-outline-variant">
+                                <td className="py-sm text-on-surface-variant">Dependencies Checked</td>
+                                <td className="py-sm text-right font-medium">
+                                  {manualScanResult.missingDependencies.length === 0
+                                    ? "All verified"
+                                    : `${manualScanResult.missingDependencies.length} missing`}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+
+                          <button
+                            type="button"
+                            className="w-full btn-primary rounded-lg py-md px-md font-button-text text-button-text transition-colors cursor-pointer font-semibold"
+                            onClick={handleLaunchManual}
+                          >
+                            Launch Workspace
+                          </button>
+                        </div>
+                      )}
+
+                      {cloneError && (
+                        <div className="flash flash-danger mt-md text-[12px] rounded">
+                          {cloneError}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* LOCAL MODE CONTENT */}
+              {setupMode === "local" && (
+                <div className="border border-outline-variant rounded-xl p-lg bg-surface-container">
+                  <h3 className="font-headline-sm text-on-surface mb-xs">Link Local Repository</h3>
+                  <p className="font-body-md text-[13px] text-on-surface-variant mb-lg">
+                    Provide the directory path of an existing repository already created on your device.
+                  </p>
+
+                  <div className="mb-lg">
+                    <label className="block font-button-text text-button-text text-on-surface mb-sm">
+                      Pre-existing Folder Path
+                    </label>
+                    <div className="flex gap-sm items-center">
+                      <input
+                        type="text"
+                        className="flex-grow input-surface rounded-md px-md py-sm text-on-surface font-body-md transition-shadow"
+                        value={manualPath}
+                        onChange={(e) => {
+                          setManualPath(e.target.value);
+                          setManualError("");
+                          setManualStatus("idle");
+                        }}
+                        placeholder="/Users/username/Documents/GitHub/project"
+                        required
+                      />
+                      {typeof window !== "undefined" && window.electron && (
+                        <button
+                          type="button"
+                          onClick={handleChooseManualPath}
+                          className="btn-secondary rounded-lg py-sm px-md shrink-0 flex items-center font-semibold text-xs h-[38px] cursor-pointer"
+                        >
+                          Browse...
+                        </button>
+                      )}
+                    </div>
+                    <p className="font-body-md text-[11px] text-on-surface-variant mt-xs">
+                      OmniSync will verify this path, scan its Node compatibility, and configure logs.
+                    </p>
+                  </div>
+
+                  {manualStatus === "idle" && (
                     <button
                       type="button"
                       className="w-full btn-primary rounded-lg py-md px-md font-button-text text-button-text transition-colors cursor-pointer font-semibold"
-                      onClick={handleLaunchManual}
+                      onClick={runManualScan}
                     >
-                      Launch Workspace
+                      Verify &amp; Scan Directory
                     </button>
-                  </div>
-                )}
+                  )}
 
-                {manualError && (
-                  <div className="flash flash-danger mt-md text-[12px]">
-                    {manualError}
-                  </div>
-                )}
-              </div>
+                  {manualStatus === "scanning" && (
+                    <div className="flex items-center gap-sm p-md bg-surface rounded-lg border border-outline-variant">
+                      <div className="w-5 h-5 border-2 border-[#58a6ff]/10 border-t-[#58a6ff] rounded-full animate-spin"></div>
+                      <span className="text-[13px] text-on-surface-variant">
+                        Analyzing node compatibility levels and package.json configurations...
+                      </span>
+                    </div>
+                  )}
 
-              <div className="flex justify-between items-center mt-lg pt-md border-t border-outline-variant">
+                  {manualStatus === "success" && manualScanResult && (
+                    <div className="flex flex-col gap-md mt-md">
+                      <div className="flash flash-success m-0 py-sm px-md text-[12px] rounded">
+                        Workspace verified successfully. Click below to launch.
+                      </div>
+
+                      <table className="w-full border-collapse text-[12px] text-on-surface">
+                        <tbody>
+                          <tr className="border-b border-outline-variant">
+                            <td className="py-sm text-on-surface-variant">Node.js Compatibility</td>
+                            <td className="py-sm text-right">
+                              {manualScanResult.isNodeCompatible ? (
+                                <span className="badge badge-success">Compatible ({manualScanResult.nodeVersion})</span>
+                              ) : (
+                                <span className="badge badge-danger">Incompatible ({manualScanResult.nodeVersion})</span>
+                              )}
+                            </td>
+                          </tr>
+                          <tr className="border-b border-outline-variant">
+                            <td className="py-sm text-on-surface-variant">Dependencies Checked</td>
+                            <td className="py-sm text-right font-medium">
+                              {manualScanResult.missingDependencies.length === 0
+                                ? "All verified"
+                                : `${manualScanResult.missingDependencies.length} missing`}
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+
+                      <button
+                        type="button"
+                        className="w-full btn-primary rounded-lg py-md px-md font-button-text text-button-text transition-colors cursor-pointer font-semibold"
+                        onClick={handleLaunchManual}
+                      >
+                        Launch Workspace
+                      </button>
+                    </div>
+                  )}
+
+                  {manualError && (
+                    <div className="flash flash-danger mt-md text-[12px] rounded">
+                      {manualError}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex justify-between items-center mt-xl">
                 <button
                   type="button"
                   className="btn-secondary rounded-lg py-sm px-md font-button-text text-button-text transition-colors cursor-pointer"
                   onClick={() => setStep("profile-selection")}
-                  disabled={manualStatus === "scanning"}
+                  disabled={manualStatus === "scanning" || cloneStatus === "cloning"}
                 >
                   Back to Workspaces
                 </button>
