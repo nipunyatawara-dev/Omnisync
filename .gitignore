@@ -49,19 +49,3 @@ next-env.d.ts
 /User data/
 /.vscode/
 /.idea/
-# dummy/mock workspace repositories
-/omnisync-editor/
-/nextjs-electron-utility/
-/billcraft-invoice-manager/
-/starlight-dashboard/
-/personal-website/
-/react-components-lib/
-/node-cli-boilerplate/
-/python-data-analyzer/
-/electron-dock-app/
-/gemini-mcp-server/
-/go-web-server/
-/docker-k8s-configs/
-/blog-engine-astro/
-/ios-workout-tracker/
-/rust-game-engine/

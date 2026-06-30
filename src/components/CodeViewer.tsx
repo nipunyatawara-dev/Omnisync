@@ -16,7 +16,6 @@ function parseMarkdown(md: string) {
   
   let inCodeBlock = false;
   let codeBlockContent: string[] = [];
-  let codeBlockLang = "";
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -44,7 +43,6 @@ function parseMarkdown(md: string) {
         inCodeBlock = false;
       } else {
         inCodeBlock = true;
-        codeBlockLang = line.slice(3).trim();
       }
       continue;
     }
@@ -140,7 +138,10 @@ export default function CodeViewer({ filePath, content, isLoading }: CodeViewerP
   };
 
   useEffect(() => {
-    setViewMode("preview");
+    const timer = setTimeout(() => {
+      setViewMode("preview");
+    }, 0);
+    return () => clearTimeout(timer);
   }, [filePath]);
 
   if (!filePath) {

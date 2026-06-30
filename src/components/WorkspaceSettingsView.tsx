@@ -11,17 +11,15 @@ interface WorkspaceSettingsViewProps {
 export default function WorkspaceSettingsView({ activeProfile, onProfileUpdated }: WorkspaceSettingsViewProps) {
   // Workspace / Local Repository configurations
   const [workspacePath, setWorkspacePath] = useState(activeProfile?.workspacePath || "");
-  const [workspaceType, setWorkspaceType] = useState<"automatic" | "manual">(activeProfile?.workspaceType || "manual");
-  const [gitToken, setGitToken] = useState(activeProfile?.gitToken || "");
-  const [showToken, setShowToken] = useState(false);
+  const workspaceType = activeProfile?.workspaceType || "manual";
+  const gitToken = activeProfile?.gitToken || "";
 
   // Repository-specific settings
-  const profileConfig = (activeProfile as any) || {};
-  const [branchProtection, setBranchProtection] = useState<boolean>(profileConfig.branchProtection ?? true);
-  const [autoFetch, setAutoFetch] = useState<boolean>(profileConfig.autoFetch ?? true);
-  const [devPort, setDevPort] = useState<number>(profileConfig.port ?? 3000);
-  const [runCommand, setRunCommand] = useState<string>(profileConfig.runCommand ?? "npm run dev");
-  const [buildCommand, setBuildCommand] = useState<string>(profileConfig.buildCommand ?? "npm run build");
+  const [branchProtection, setBranchProtection] = useState<boolean>(activeProfile?.branchProtection ?? true);
+  const [autoFetch, setAutoFetch] = useState<boolean>(activeProfile?.autoFetch ?? true);
+  const [devPort, setDevPort] = useState<number>(activeProfile?.port ?? 3000);
+  const [runCommand, setRunCommand] = useState<string>(activeProfile?.runCommand ?? "npm run dev");
+  const [buildCommand, setBuildCommand] = useState<string>(activeProfile?.buildCommand ?? "npm run build");
 
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);

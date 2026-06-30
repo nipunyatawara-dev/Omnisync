@@ -13,6 +13,11 @@ export interface UserProfile {
   password?: string; // Local access password
   workspacePath?: string; // Selected local repo workspace directory path
   workspaceType?: "automatic" | "manual";
+  branchProtection?: boolean;
+  autoFetch?: boolean;
+  port?: number;
+  runCommand?: string;
+  buildCommand?: string;
   createdAt: string;
   updatedAt: string;
 }
