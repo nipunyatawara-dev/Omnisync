@@ -50,13 +50,18 @@ function startNextServer() {
 }
 
 function createWindow() {
+  const isDev = !app.isPackaged;
+  const scriptSrc = isDev
+    ? "script-src 'self' 'unsafe-eval' 'unsafe-inline';"
+    : "script-src 'self' 'unsafe-inline';";
+
   // Configure Content-Security-Policy (CSP) headers for the Electron window
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
         "Content-Security-Policy": [
-          "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://avatars.githubusercontent.com https://github.com; connect-src 'self' https://api.github.com https://github.com http://localhost:* ws://localhost:*;"
+          `default-src 'self'; ${scriptSrc} style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://avatars.githubusercontent.com https://github.com; connect-src 'self' https://api.github.com https://github.com http://localhost:* ws://localhost:*;`
         ]
       }
     });
@@ -122,6 +127,19 @@ function createWindow() {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  // Intercept and prevent in-app navigation to arbitrary domains
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.origin !== SERVER_URL) {
+        event.preventDefault();
+        shell.openExternal(url);
+      }
+    } catch {
+      event.preventDefault();
+    }
   });
 
   mainWindow.loadURL(SERVER_URL);

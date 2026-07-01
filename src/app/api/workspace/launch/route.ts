@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import fs from "fs";
 import path from "path";
 import { getRunnerLogs } from "@/lib/runner";
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       else if (ide === "codex") appName = "Codex";
 
       if (appName) {
-        exec(`open -a "${appName}" "${cwd}"`, (err) => {
+        execFile("open", ["-a", appName, cwd], (err) => {
           if (err) {
             console.error(`Failed to launch ${appName}:`, err);
           }
@@ -97,7 +97,9 @@ export async function POST(request: Request) {
         }
       }
 
-      exec(`open "${url}"`);
+      execFile("open", [url], (err) => {
+        if (err) console.error("Failed to open URL:", err);
+      });
       return NextResponse.json({ success: true, url });
     }
 
@@ -127,12 +129,17 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "No Xcode workspace or project file found." }, { status: 400 });
       }
 
-      exec(`open "${path.join(cwd, targetFile)}"`);
+      execFile("open", [path.join(cwd, targetFile)], (err) => {
+        if (err) console.error("Failed to open Xcode project/workspace:", err);
+      });
       return NextResponse.json({ success: true });
     }
 
     if (type === "electron") {
-      exec(`npm run electron`, { cwd });
+      const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+      execFile(npmCmd, ["run", "electron"], { cwd }, (err) => {
+        if (err) console.error("Failed to run Electron process:", err);
+      });
       return NextResponse.json({ success: true });
     }
 

@@ -97,7 +97,7 @@ export async function POST(request: Request) {
       
       // Use execFile asynchronously to avoid event loop blocking and prevent command injection
       await new Promise<void>((resolve, reject) => {
-        execFile("git", ["checkout", branch], { cwd }, (err) => {
+        execFile("git", ["checkout", "--", branch], { cwd }, (err) => {
           if (err) {
             reject(err);
           } else {

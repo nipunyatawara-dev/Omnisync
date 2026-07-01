@@ -18,11 +18,12 @@ if (!serverToken) {
 export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
-  // Protect all Workspace, Profile, and GitHub management endpoints
+  // Protect all Workspace, Profile, GitHub, and authentication configuration endpoints
   if (
     path.startsWith("/api/workspace") ||
     path.startsWith("/api/profiles") ||
-    path.startsWith("/api/github")
+    path.startsWith("/api/github") ||
+    path.startsWith("/api/auth/config")
   ) {
     const token = request.cookies.get("omnisync_token")?.value;
     if (!token || token !== serverToken) {
@@ -41,5 +42,6 @@ export const config = {
     "/api/workspace/:path*",
     "/api/profiles/:path*",
     "/api/github/:path*",
+    "/api/auth/config",
   ],
 };

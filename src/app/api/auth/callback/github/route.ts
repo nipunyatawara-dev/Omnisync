@@ -92,6 +92,15 @@ export async function GET(request: Request) {
   }
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function renderHtmlResponse(
   success: boolean,
   token: string,
@@ -99,6 +108,16 @@ function renderHtmlResponse(
   avatarUrl: string,
   errorMessage = ""
 ) {
+  const safeUsername = escapeHtml(username);
+  const safeError = escapeHtml(errorMessage);
+  const statusObject = JSON.stringify({
+    success,
+    token,
+    username,
+    avatarUrl,
+    error: errorMessage
+  });
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -153,18 +172,12 @@ function renderHtmlResponse(
 <body>
   <div class="card">
     <h1>${success ? "Sign-in Successful" : "Sign-in Failed"}</h1>
-    <p>${success ? `Successfully authenticated as <strong>@${username}</strong>.` : `Error: ${errorMessage}`}</p>
+    <p>${success ? `Successfully authenticated as <strong>@${safeUsername}</strong>.` : `Error: ${safeError}`}</p>
     <p>${success ? "Closing this window and returning to OmniSync..." : "You can close this window and try again."}</p>
     ${success ? '<div class="spinner"></div>' : ""}
   </div>
   <script>
-    const status = {
-      success: ${success},
-      token: "${token}",
-      username: "${username}",
-      avatarUrl: "${avatarUrl}",
-      error: "${errorMessage.replace(/"/g, '\\"')}"
-    };
+    const status = ${statusObject};
     
     try {
       if (window.opener) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState, memo } from "react";
 
 export interface FileNode {
   name: string;
@@ -39,7 +39,7 @@ interface TreeNodeProps {
   level: number;
 }
 
-function TreeNode({ node, selectedFile, onSelectFile, level }: TreeNodeProps) {
+const TreeNode = memo(function TreeNode({ node, selectedFile, onSelectFile, level }: TreeNodeProps) {
   const [isOpen, setIsOpen] = useState(false);
   const isSelected = selectedFile === node.relativePath;
 
@@ -120,4 +120,13 @@ function TreeNode({ node, selectedFile, onSelectFile, level }: TreeNodeProps) {
       )}
     </div>
   );
-}
+}, (prev, next) => {
+  const prevSelected = prev.selectedFile === prev.node.relativePath;
+  const nextSelected = next.selectedFile === next.node.relativePath;
+  return (
+    prev.node === next.node &&
+    prevSelected === nextSelected &&
+    prev.level === next.level &&
+    prev.onSelectFile === next.onSelectFile
+  );
+});

@@ -29,8 +29,11 @@ const PROFILES_FILE = path.join(USER_DATA_DIR, "profiles.json");
 const CONFIG_FILE = path.join(USER_DATA_DIR, "config.json"); // To store active profile
 const OAUTH_FILE = path.join(USER_DATA_DIR, "oauth.json"); // To store OAuth config credentials
 
-const ALGORITHM = "aes-256-cbc";
-const IV_LENGTH = 16;
+const ALGORITHM = "aes-256-gcm";
+const LEGACY_ALGORITHM = "aes-256-cbc";
+const IV_LENGTH = 12; // Standard for GCM
+const LEGACY_IV_LENGTH = 16;
+const TAG_LENGTH = 16;
 
 function getMachineSecret(): string {
   try {
@@ -52,23 +55,39 @@ export function encrypt(text: string): string {
   const cipher = crypto.createCipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
   let encrypted = cipher.update(text, "utf8", "hex");
   encrypted += cipher.final("hex");
-  return iv.toString("hex") + ":" + encrypted;
+  const authTag = cipher.getAuthTag().toString("hex");
+  return iv.toString("hex") + ":" + authTag + ":" + encrypted;
 }
 
 export function decrypt(text: string): string {
   try {
-    const textParts = text.split(":");
-    const ivHex = textParts.shift();
-    if (!ivHex) return text;
-    const iv = Buffer.from(ivHex, "hex");
-    const encryptedHex = textParts.join(":");
-    const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-    let decrypted = decipher.update(encryptedHex, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-  } catch {
-    // If decryption fails, return original text (backward compatibility)
+    const parts = text.split(":");
+    if (parts.length === 2) {
+      // Legacy aes-256-cbc support
+      const ivHex = parts[0];
+      const encryptedHex = parts[1];
+      const iv = Buffer.from(ivHex, "hex");
+      const decipher = crypto.createDecipheriv(LEGACY_ALGORITHM, ENCRYPTION_KEY, iv);
+      let decrypted = decipher.update(encryptedHex, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    } else if (parts.length === 3) {
+      // Modern aes-256-gcm
+      const ivHex = parts[0];
+      const tagHex = parts[1];
+      const encryptedHex = parts[2];
+      const iv = Buffer.from(ivHex, "hex");
+      const tag = Buffer.from(tagHex, "hex");
+      const decipher = crypto.createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+      decipher.setAuthTag(tag);
+      let decrypted = decipher.update(encryptedHex, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    }
     return text;
+  } catch (err) {
+    console.error("Decryption failed. The secret key might be invalid or file is tampered.", err);
+    throw new Error("Decryption failed");
   }
 }
 
@@ -84,11 +103,22 @@ export async function getProfiles(): Promise<UserProfile[]> {
     const data = await fs.readFile(PROFILES_FILE, "utf-8");
     const json = JSON.parse(data);
     const profiles = (json.profiles || []) as UserProfile[];
-    return profiles.map((p) => ({
-      ...p,
-      gitToken: p.gitToken ? decrypt(p.gitToken) : undefined,
-      password: p.password ? decrypt(p.password) : undefined,
-    }));
+    return profiles.map((p) => {
+      try {
+        return {
+          ...p,
+          gitToken: p.gitToken ? decrypt(p.gitToken) : undefined,
+          password: p.password ? decrypt(p.password) : undefined,
+        };
+      } catch (err) {
+        console.error(`Failed to decrypt credentials for profile: ${p.id}`, err);
+        return {
+          ...p,
+          gitToken: undefined,
+          password: undefined,
+        };
+      }
+    });
   } catch (error: unknown) {
     const err = error as { code?: string };
     if (err && err.code === "ENOENT") {
@@ -137,9 +167,10 @@ export async function updateProfile(id: string, updates: Partial<UserProfile>): 
     throw new Error("Profile not found");
   }
   
+  const { id: _, createdAt: __, ...allowedUpdates } = updates;
   const updatedProfile: UserProfile = {
     ...profiles[index],
-    ...updates,
+    ...allowedUpdates,
     updatedAt: new Date().toISOString(),
   };
   
