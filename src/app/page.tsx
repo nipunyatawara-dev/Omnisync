@@ -105,28 +105,39 @@ export default function DashboardPage() {
   const [toast, setToast] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const dismissToast = () => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+    setToast(null);
+  };
+
   const showNotification = (message: string, type: "info" | "success" | "error" = "info", duration = 4000) => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+      toastTimeoutRef.current = null;
+    }
+
     // 1. Try showing a system notification first
     if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
       try {
         new window.Notification("OmniSync", {
           body: message,
         });
-        return; // Skip internal toast
+        setToast(null);
+        return;
       } catch (err) {
         console.error("System notification failed, falling back to toast:", err);
       }
     }
 
     // 2. Fallback: Show internal redesigned toast
-    if (toastTimeoutRef.current) {
-      clearTimeout(toastTimeoutRef.current);
-    }
-
     setToast({ message, type });
 
     toastTimeoutRef.current = setTimeout(() => {
       setToast(null);
+      toastTimeoutRef.current = null;
     }, duration);
   };
 
@@ -142,6 +153,17 @@ export default function DashboardPage() {
   const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
   const [isLiveTerminalActive, setIsLiveTerminalActive] = useState(false);
   const liveTerminalEndRef = useRef<HTMLDivElement | null>(null);
+
+  type DependencyInstallPhase = "installing" | "success" | "error";
+  interface DependencyInstallModalState {
+    phase: DependencyInstallPhase;
+    missingCount: number;
+    missingPackages: string[];
+    logs: string[];
+    error?: string;
+  }
+  const [depInstallModal, setDepInstallModal] = useState<DependencyInstallModalState | null>(null);
+  const depInstallLogEndRef = useRef<HTMLDivElement | null>(null);
 
   // Timeline state
   const [allCommits, setAllCommits] = useState<RepoCommit[]>([]);
@@ -384,61 +406,99 @@ export default function DashboardPage() {
     }
   };
 
-  // Auto check diagnostics & trigger installation if needed
+  // Stream npm install output into modal + diagnostics terminal
+  const streamInstallOutput = async (
+    onLog: (message: string) => void
+  ): Promise<void> => {
+    const res = await fetch("/api/workspace/diagnostics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "install" }),
+    });
+
+    if (!res.ok) {
+      throw new Error("Install command failed to start");
+    }
+
+    const reader = res.body?.getReader();
+    if (!reader) {
+      throw new Error("No install output stream received");
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const data = JSON.parse(line) as { type?: string; message?: string };
+          if (data.type === "error") {
+            throw new Error(data.message || "Install failed");
+          }
+          if (data.type === "log" && data.message) {
+            onLog(data.message);
+          }
+        } catch (err) {
+          if (err instanceof SyntaxError) continue;
+          throw err;
+        }
+      }
+    }
+  };
+
+  const runDependencyInstall = async (missingPackages: string[]) => {
+    const count = missingPackages.length;
+    setDepInstallModal({
+      phase: "installing",
+      missingCount: count,
+      missingPackages,
+      logs: [`Detected ${count} missing package${count === 1 ? "" : "s"}. Running npm install...`],
+    });
+    setIsLiveTerminalActive(true);
+    setDiagnosticLogs([]);
+
+    const appendLog = (message: string) => {
+      setDiagnosticLogs((prev) => [...prev, message]);
+      setDepInstallModal((prev) =>
+        prev ? { ...prev, logs: [...prev.logs, message] } : prev
+      );
+    };
+
+    try {
+      await streamInstallOutput(appendLog);
+
+      setDepInstallModal((prev) =>
+        prev ? { ...prev, phase: "success", logs: [...prev.logs, "All dependencies installed successfully."] } : prev
+      );
+      showNotification("Dependencies installed successfully!", "success");
+
+      const reloadRes = await fetch("/api/workspace/diagnostics");
+      const reloadData = await reloadRes.json();
+      setDiagData(reloadData as DiagnosticDetails);
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      appendLog(`Error: ${errMsg}`);
+      setDepInstallModal((prev) =>
+        prev ? { ...prev, phase: "error", error: errMsg } : prev
+      );
+      showNotification(`Dependency installation failed: ${errMsg}`, "error");
+    } finally {
+      setIsLiveTerminalActive(false);
+    }
+  };
+
+  // Check for missing deps on workspace open and install with visible progress
   const checkAndInstallDependencies = async (diagnostics: DiagnosticDetails) => {
     if (diagnostics.missingDependencies && diagnostics.missingDependencies.length > 0) {
-      showNotification("Auto-installing missing workspace dependencies...", "info");
-      setIsLiveTerminalActive(true);
-      setDiagnosticLogs([]);
-      
-      try {
-        const res = await fetch("/api/workspace/diagnostics", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "install" }),
-        });
-
-        if (!res.ok) throw new Error("Install command failed");
-
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (!line.trim()) continue;
-              try {
-                const data = JSON.parse(line);
-                if (data.type === "log") {
-                  setDiagnosticLogs((prev) => [...prev, data.message]);
-                } else if (data.type === "error") {
-                  throw new Error(data.message);
-                }
-              } catch {}
-            }
-          }
-        }
-
-        showNotification("Dependencies installed successfully!", "success");
-        
-        // Reload diagnostics after install completes
-        const reloadRes = await fetch("/api/workspace/diagnostics");
-        const reloadData = await reloadRes.json();
-        setDiagData(reloadData as DiagnosticDetails);
-      } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        showNotification(`Dependency installation failed: ${errMsg}`, "error", 5000);
-      } finally {
-        setIsLiveTerminalActive(false);
-      }
+      await runDependencyInstall(diagnostics.missingDependencies);
     }
   };
 
@@ -764,6 +824,12 @@ export default function DashboardPage() {
     }
   }, [diagnosticLogs]);
 
+  useEffect(() => {
+    if (depInstallLogEndRef.current) {
+      depInstallLogEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [depInstallModal?.logs]);
+
   // Run diagnostics maintenance tasks with live streaming
   const handleMaintenanceAction = async (action: string) => {
     setIsActionLoading(true);
@@ -833,9 +899,169 @@ export default function DashboardPage() {
 
   return (
     <div className="app-container">
+      {/* Dependency install progress modal */}
+      {depInstallModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(10, 12, 16, 0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 99998,
+            padding: "24px",
+          }}
+        >
+          <div
+            className="animate-fade-slide"
+            style={{
+              width: "100%",
+              maxWidth: "520px",
+              backgroundColor: "var(--color-bg-overlay)",
+              border: "1px solid var(--color-border-default)",
+              borderRadius: "12px",
+              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.6)",
+              overflow: "hidden",
+            }}
+          >
+            <div style={{
+              padding: "16px 20px",
+              borderBottom: "1px solid var(--color-border-default)",
+              backgroundColor: "var(--color-bg-subtle)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                {depInstallModal.phase === "installing" && (
+                  <div className="spinner" style={{ width: "16px", height: "16px", flexShrink: 0 }} />
+                )}
+                {depInstallModal.phase === "success" && (
+                  <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--color-success-fg)" }}>check_circle</span>
+                )}
+                {depInstallModal.phase === "error" && (
+                  <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--color-danger-fg)" }}>error</span>
+                )}
+                <div>
+                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "var(--color-fg-default)" }}>
+                    {depInstallModal.phase === "installing" && "Installing Dependencies"}
+                    {depInstallModal.phase === "success" && "Dependencies Installed"}
+                    {depInstallModal.phase === "error" && "Installation Failed"}
+                  </h3>
+                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--color-fg-muted)" }}>
+                    {depInstallModal.missingCount} missing package{depInstallModal.missingCount === 1 ? "" : "s"} detected in this workspace
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
+              {depInstallModal.phase === "installing" && (
+                <div style={{
+                  height: "4px",
+                  borderRadius: "999px",
+                  backgroundColor: "var(--color-bg-active)",
+                  overflow: "hidden",
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: "40%",
+                    borderRadius: "999px",
+                    backgroundColor: "var(--color-accent-fg)",
+                    animation: "depInstallProgress 1.2s ease-in-out infinite",
+                  }} />
+                </div>
+              )}
+              {depInstallModal.phase === "success" && (
+                <div style={{
+                  height: "4px",
+                  borderRadius: "999px",
+                  backgroundColor: "var(--color-success-fg)",
+                }} />
+              )}
+              {depInstallModal.phase === "error" && (
+                <div style={{
+                  height: "4px",
+                  borderRadius: "999px",
+                  backgroundColor: "var(--color-danger-fg)",
+                }} />
+              )}
+
+              {depInstallModal.missingPackages.length > 0 && depInstallModal.phase === "installing" && (
+                <p style={{ margin: 0, fontSize: "11px", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)" }}>
+                  {depInstallModal.missingPackages.slice(0, 6).join(", ")}
+                  {depInstallModal.missingPackages.length > 6
+                    ? ` +${depInstallModal.missingPackages.length - 6} more`
+                    : ""}
+                </p>
+              )}
+
+              <div style={{
+                backgroundColor: "#090d13",
+                border: "1px solid var(--color-border-default)",
+                borderRadius: "8px",
+                padding: "10px 12px",
+                fontFamily: "var(--font-mono)",
+                fontSize: "11px",
+                color: "#8b949e",
+                maxHeight: "180px",
+                overflowY: "auto",
+              }}>
+                {depInstallModal.logs.map((log, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      lineHeight: "1.5",
+                      whiteSpace: "pre-wrap",
+                      color: log.startsWith("Error:") ? "var(--color-danger-fg)" : "#8b949e",
+                    }}
+                  >
+                    {log}
+                  </div>
+                ))}
+                <div ref={depInstallLogEndRef} />
+              </div>
+
+              {depInstallModal.phase === "error" && depInstallModal.error && (
+                <p style={{ margin: 0, fontSize: "12px", color: "var(--color-danger-fg)" }}>
+                  {depInstallModal.error}
+                </p>
+              )}
+            </div>
+
+            <div style={{
+              padding: "12px 20px",
+              borderTop: "1px solid var(--color-border-default)",
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: "8px",
+              backgroundColor: "var(--color-bg-subtle)",
+            }}>
+              {depInstallModal.phase === "error" && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-primary"
+                  onClick={() => runDependencyInstall(depInstallModal.missingPackages)}
+                >
+                  Retry
+                </button>
+              )}
+              {depInstallModal.phase !== "installing" && (
+                <button
+                  type="button"
+                  className="btn btn-sm"
+                  onClick={() => setDepInstallModal(null)}
+                >
+                  {depInstallModal.phase === "success" ? "Continue" : "Dismiss"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-md right-md z-[99999] animate-fade-slide pointer-events-none select-none" style={{ maxWidth: "360px" }}>
+        <div className="fixed top-md right-md z-[99999] animate-fade-slide select-none" style={{ maxWidth: "360px" }}>
           <div style={{
             padding: "12px 18px",
             borderRadius: "10px",
@@ -867,7 +1093,15 @@ export default function DashboardPage() {
               </span>
               <span className="font-button-text font-semibold text-[13px]">{toast.message}</span>
             </div>
-            
+            <button
+              type="button"
+              onClick={dismissToast}
+              aria-label="Dismiss notification"
+              className="shrink-0 ml-auto p-1 rounded-md text-[var(--color-fg-muted)] hover:text-[var(--color-fg-default)] hover:bg-white/5 transition-colors"
+            >
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+
             {/* Progress Bar */}
             <div style={{
               position: "absolute",
@@ -1217,13 +1451,13 @@ export default function DashboardPage() {
                         padding: "6px",
                       }}>
                         {[
-                          { id: "vscode", label: "VS Code", path: "M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.56-3.46c-.47-.357-1.127-.32-1.562.094L.29 6.398a1.117 1.117 0 0 0-.056 1.578l3.666 3.99-3.666 3.99a1.117 1.117 0 0 0 .056 1.578l.634.624c.435.414 1.092.45 1.562.094l4.56-3.46 9.46 8.63c.484.447 1.22.56 1.705.29l4.94-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.15 10.742l-5.69-4.226 5.69-4.226v8.452z" },
-                          { id: "zed", label: "Zed Editor", path: "M24 9.429V17h-2.571l-3.429-3.429h-.857v-4.142h2.571v2.571l3.429 3.429v-6zm-12 0h2.571v4.143H12v-2.572l-3.429-3.429v6H6V7h2.571l3.429 3.429z" },
-                          { id: "intellij", label: "IntelliJ IDEA", path: "M0 0v24h24V0H0zm5.176 3.03h2.64v1.89h-2.64v-1.89zm1.096 15.688c-1.376 0-2.304-1.088-2.304-2.528c0-1.424.928-2.512 2.304-2.512c.608 0 1.152.208 1.584.576l-.816.944a1.325 1.325 0 0 0-.768-.288c-.688 0-1.12.56-1.12 1.28c0 .704.432 1.264 1.12 1.264c.336 0 .64-.128.848-.32v-.72H6.84v-1.008h2.096v2.304c-.496.48-1.184.72-1.808.72zm5.728-5.008h1.168v5.008h-1.168v-5.008zm3.264 0h1.168v5.008h-1.168v-5.008zm-6.192-3.84h1.056v3.296h-1.056V9.87zm3.168 0h1.056v3.296h-1.056V9.87zm4.784.096c0 .768-.528 1.296-1.248 1.296c-.336 0-.624-.128-.816-.32l-.656.736c.384.384.928.624 1.472.624c1.376 0 2.288-1.008 2.288-2.336v-3.488h-1.04v3.488zM4 20h16v-1.333H4V20z" },
-                          { id: "webstorm", label: "WebStorm", path: "M0 0v24h24V0H0zm5.176 3.03h2.64v1.89h-2.64v-1.89zm1.096 15.688c-1.376 0-2.304-1.088-2.304-2.528c0-1.424.928-2.512 2.304-2.512c.608 0 1.152.208 1.584.576l-.816.944a1.325 1.325 0 0 0-.768-.288c-.688 0-1.12.56-1.12 1.28c0 .704.432 1.264 1.12 1.264c.336 0 .64-.128.848-.32v-.72H6.84v-1.008h2.096v2.304c-.496.48-1.184.72-1.808.72zm5.728-5.008h1.168v5.008h-1.168v-5.008zm3.264 0h1.168v5.008h-1.168v-5.008zm-6.192-3.84h1.056v3.296h-1.056V9.87zm3.168 0h1.056v3.296h-1.056V9.87zm4.784.096c0 .768-.528 1.296-1.248 1.296c-.336 0-.624-.128-.816-.32l-.656.736c.384.384.928.624 1.472.624c1.376 0 2.288-1.008 2.288-2.336v-3.488h-1.04v3.488zM4 20h16v-1.333H4V20z" },
-                          { id: "xcode", label: "Xcode", path: "M21.2 5.09c-.27-.47-.84-.71-1.38-.59L15 5.68 12.35 1.5a1.731 1.731 0 0 0-2.7 0L7 5.68 2.18 4.5c-.54-.12-1.11.12-1.38.59a1.693 1.693 0 0 0 .17 1.83l3.52 4.14V13l-3.52 4.14a1.706 1.706 0 0 0-.17 1.83c.27.47.84.71 1.38.59l4.82-1.18 2.65 4.18c.32.5.88.8 1.48.8s1.16-.3 1.48-.8L15 18.52l4.82 1.18c.54.12 1.11-.12 1.38-.59c.27-.47.2-.1-.07-1.83l-3.52-4.14V11.14l3.52-4.14c.27-.47.34-1.36-.07-1.83zm-10.7.35a.863.863 0 0 1 1.5 0l2.36 3.73-2.36 3.73a.863.863 0 0 1-1.5 0L8.14 9.17l2.36-3.73zm-3.23 8.3L5.43 17.5a.863.863 0 0 1-1.5-.59v-7.46a.863.863 0 0 1 1.5-.59l1.84 3.76v.38zm9.46-.38l1.84-3.76a.863.863 0 0 1 1.5.59v7.46a.863.863 0 0 1-1.5.59l-1.84-3.76v-.38L16.73 13.36z" },
-                          { id: "antigravity", label: "Antigravity", path: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" },
-                          { id: "codex", label: "Codex", path: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14H7v-2h3v2zm3-4H7v-2h6v2zm3-4H7V7h9v2z" },
+                          { id: "vscode", label: "VS Code", icon: "/icons/ide/vscode.svg" },
+                          { id: "zed", label: "Zed Editor", icon: "/icons/ide/zed.svg" },
+                          { id: "intellij", label: "IntelliJ IDEA", icon: "/icons/ide/intellij.svg" },
+                          { id: "webstorm", label: "WebStorm", icon: "/icons/ide/webstorm.svg" },
+                          { id: "xcode", label: "Xcode", icon: "/icons/ide/xcode.svg" },
+                          { id: "antigravity", label: "Antigravity", icon: "/icons/ide/antigravity.svg" },
+                          { id: "codex", label: "Codex", icon: "/icons/ide/codex.svg" },
                         ].map((ide) => (
                           <button
                             key={ide.id}
@@ -1245,9 +1479,13 @@ export default function DashboardPage() {
                             }}
                             className="hover-bg-active"
                           >
-                            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style={{ flexShrink: 0 }}>
-                              <path d={ide.path} />
-                            </svg>
+                            <img
+                              src={ide.icon}
+                              alt=""
+                              width={14}
+                              height={14}
+                              style={{ flexShrink: 0, objectFit: "contain" }}
+                            />
                             <span style={{ flex: 1 }}>{ide.label}</span>
                           </button>
                         ))}

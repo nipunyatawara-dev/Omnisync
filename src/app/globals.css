@@ -273,7 +273,7 @@ input, select, textarea, button {
 
 .sidebar-btn {
   background: none;
-  border: none;
+  border: 1px solid transparent;
   color: var(--color-fg-muted);
   cursor: pointer;
   padding: 8px;
@@ -283,7 +283,16 @@ input, select, textarea, button {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.sidebar-btn:focus-visible {
+  outline: 2px solid var(--color-accent-fg);
+  outline-offset: 2px;
 }
 
 .sidebar-btn:hover {
@@ -294,7 +303,7 @@ input, select, textarea, button {
 .sidebar-btn.active {
   color: var(--color-accent-fg);
   background-color: var(--color-accent-bg);
-  border: 1px solid var(--color-accent-border);
+  border-color: var(--color-accent-border);
 }
 
 .content-pane {
@@ -1338,6 +1347,11 @@ body.electron-app [role="button"] {
 @keyframes loadingBar {
   0% { width: 0%; }
   100% { width: 100%; }
+}
+
+@keyframes depInstallProgress {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
 }
 
 @keyframes fadeInScale {
