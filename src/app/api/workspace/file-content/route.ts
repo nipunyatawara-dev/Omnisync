@@ -16,7 +16,14 @@ export async function GET(request: Request) {
   }
 
   try {
-    const absolutePath = path.join(profile.workspacePath, relativeFile);
+    const rootPath = path.resolve(profile.workspacePath);
+    const absolutePath = path.resolve(rootPath, relativeFile);
+    
+    // Check for path traversal
+    if (!absolutePath.startsWith(rootPath + path.sep) && absolutePath !== rootPath) {
+      return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
+    }
+
     const content = await fs.readFile(absolutePath, "utf-8");
     return NextResponse.json({ content });
   } catch (err: unknown) {
@@ -37,7 +44,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File parameter missing" }, { status: 400 });
     }
 
-    const absolutePath = path.join(profile.workspacePath, file);
+    const rootPath = path.resolve(profile.workspacePath);
+    const absolutePath = path.resolve(rootPath, file);
+
+    // Check for path traversal
+    if (!absolutePath.startsWith(rootPath + path.sep) && absolutePath !== rootPath) {
+      return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
+    }
+
     await fs.writeFile(absolutePath, content, "utf-8");
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

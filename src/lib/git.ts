@@ -1,5 +1,5 @@
-import { execSync } from "child_process";
-import fs from "fs";
+import { execFile } from "child_process";
+import { promises as fs } from "fs";
 
 export interface GitCommit {
   hash: string;
@@ -14,33 +14,36 @@ export interface DiffLine {
   lineNumber?: number;
 }
 
-// Helper to run commands
-function runGit(cmd: string, cwd: string): string {
-  try {
-    return execSync(cmd, { cwd, encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-  } catch {
-    // If command errors out, return empty string
-    return "";
-  }
+// Helper to run commands asynchronously with parameter arrays
+function runGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, encoding: "utf-8" }, (error, stdout) => {
+      if (error) {
+        resolve("");
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
 }
 
 // Get current active branch
-export function getCurrentBranch(cwd: string): string {
-  const branch = runGit("git branch --show-current", cwd);
+export async function getCurrentBranch(cwd: string): Promise<string> {
+  const branch = await runGit(["branch", "--show-current"], cwd);
   return branch || "main";
 }
 
 // List all local branches
-export function getBranches(cwd: string): string[] {
-  const output = runGit("git branch --format='%(refname:short)'", cwd);
+export async function getBranches(cwd: string): Promise<string[]> {
+  const output = await runGit(["branch", "--format=%(refname:short)"], cwd);
   if (!output) return ["main"];
   return output.split("\n").map(b => b.trim()).filter(Boolean);
 }
 
 // Get synchronization status relative to upstream
-export function getSyncStatus(cwd: string): { ahead: number; behind: number; upstream: string } {
-  const currentBranch = getCurrentBranch(cwd);
-  const statusLine = runGit(`git status -sb`, cwd);
+export async function getSyncStatus(cwd: string): Promise<{ ahead: number; behind: number; upstream: string }> {
+  const currentBranch = await getCurrentBranch(cwd);
+  const statusLine = await runGit(["status", "-sb"], cwd);
   
   let ahead = 0;
   let behind = 0;
@@ -66,10 +69,12 @@ export function getSyncStatus(cwd: string): { ahead: number; behind: number; ups
 }
 
 // Get timeline of recent git commits for a specific file
-export function getFileCommits(cwd: string, relativeFilePath: string): GitCommit[] {
+export async function getFileCommits(cwd: string, relativeFilePath: string): Promise<GitCommit[]> {
   if (!relativeFilePath) return [];
-  const cmd = `git log --follow --pretty=format:"%H|%an|%ad|%s" -n 25 -- "${relativeFilePath}"`;
-  const output = runGit(cmd, cwd);
+  const output = await runGit(
+    ["log", "--follow", "--pretty=format:%H|%an|%ad|%s", "-n", "25", "--", relativeFilePath],
+    cwd
+  );
   if (!output) return [];
 
   return output.split("\n").map((line) => {
@@ -79,11 +84,13 @@ export function getFileCommits(cwd: string, relativeFilePath: string): GitCommit
 }
 
 // Get line-by-line diff for a commit and file
-export function getCommitDiff(cwd: string, commitHash: string, relativeFilePath: string): DiffLine[] {
+export async function getCommitDiff(cwd: string, commitHash: string, relativeFilePath: string): Promise<DiffLine[]> {
   if (!commitHash || !relativeFilePath) return [];
   
-  const cmd = `git show ${commitHash} --unified=3 --pretty=format:"" -- "${relativeFilePath}"`;
-  const diffOutput = runGit(cmd, cwd);
+  const diffOutput = await runGit(
+    ["show", commitHash, "--unified=3", "--pretty=format:", "--", relativeFilePath],
+    cwd
+  );
   if (!diffOutput) return [];
 
   const lines = diffOutput.split("\n");
@@ -112,8 +119,8 @@ export function getCommitDiff(cwd: string, commitHash: string, relativeFilePath:
 }
 
 // Scan for merge conflicts in the project
-export function getConflictFiles(cwd: string): string[] {
-  const output = runGit("git diff --name-only --diff-filter=U", cwd);
+export async function getConflictFiles(cwd: string): Promise<string[]> {
+  const output = await runGit(["diff", "--name-only", "--diff-filter=U"], cwd);
   if (!output) return [];
   return output.split("\n").map(f => f.trim()).filter(Boolean);
 }
@@ -127,18 +134,20 @@ export interface ConflictBlock {
   resolved?: "ours" | "theirs" | "both" | "custom";
 }
 
-export function parseConflictFile(filePath: string): { 
+// Optimized conflict file parser: O(n) linear scan
+export async function parseConflictFile(filePath: string): Promise<{ 
   hasConflicts: boolean;
   blocks: ConflictBlock[];
   rawLines: string[];
-} {
+}> {
   try {
-    const content = fs.readFileSync(filePath, "utf-8");
+    const content = await fs.readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const blocks: ConflictBlock[] = [];
     const rawLines: string[] = [];
     
     let isInsideConflict = false;
+    let isOurs = true;
     let oursBuffer: string[] = [];
     let theirsBuffer: string[] = [];
     let conflictStartIndex = -1;
@@ -148,11 +157,12 @@ export function parseConflictFile(filePath: string): {
       
       if (line.startsWith("<<<<<<<")) {
         isInsideConflict = true;
+        isOurs = true;
         oursBuffer = [];
         theirsBuffer = [];
         conflictStartIndex = i;
       } else if (line.startsWith("=======")) {
-        // Transition from ours to theirs
+        isOurs = false;
       } else if (line.startsWith(">>>>>>>")) {
         isInsideConflict = false;
         const originalBlock = lines.slice(conflictStartIndex, i + 1).join("\n");
@@ -168,11 +178,10 @@ export function parseConflictFile(filePath: string): {
         rawLines.push(`##CONFLICT_BLOCK:${blockId}##`);
       } else {
         if (isInsideConflict) {
-          const parentBlockIndex = lines.indexOf("=======", conflictStartIndex);
-          if (parentBlockIndex !== -1 && i > parentBlockIndex) {
-            theirsBuffer.push(line);
-          } else {
+          if (isOurs) {
             oursBuffer.push(line);
+          } else {
+            theirsBuffer.push(line);
           }
         } else {
           rawLines.push(line);
@@ -198,9 +207,11 @@ export interface RepoCommit {
   isMerge: boolean;
 }
 
-export function getAllRepoCommits(cwd: string): RepoCommit[] {
-  const cmd = `git log --all --pretty=format:"%H|%an|%ad|%s|%P" --date=format:"%Y-%m-%d"`;
-  const output = runGit(cmd, cwd);
+export async function getAllRepoCommits(cwd: string): Promise<RepoCommit[]> {
+  const output = await runGit(
+    ["log", "--all", "--pretty=format:%H|%an|%ad|%s|%P", "--date=format:%Y-%m-%d"],
+    cwd
+  );
   if (!output) return [];
 
   return output.split("\n").map((line) => {
@@ -214,3 +225,4 @@ export function getAllRepoCommits(cwd: string): RepoCommit[] {
     return { hash, author, date, subject, isMerge };
   });
 }
+

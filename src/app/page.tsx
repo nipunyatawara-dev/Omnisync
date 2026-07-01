@@ -8,6 +8,8 @@ import DiffViewer from "@/components/DiffViewer";
 import ConflictResolver from "@/components/ConflictResolver";
 import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
 import { UserProfile } from "@/lib/profiles";
+import Tooltip from "@/components/Tooltip";
+import ProductTour from "@/components/ProductTour";
 import { RunnerStatus } from "@/lib/runner";
 
 interface SyncStatus {
@@ -52,6 +54,24 @@ export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<"workspace" | "git" | "diagnostics" | "settings" | "timeline">("workspace");
   const [activeProfile, setActiveProfile] = useState<UserProfile | null>(null);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [tourOpen, setTourOpen] = useState(false);
+  const [isIdeDropdownOpen, setIsIdeDropdownOpen] = useState(false);
+  const [showGuideTourButton, setShowGuideTourButton] = useState(true);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      if (localStorage.getItem("omnisync_hide_tour_button") === "true") {
+        setShowGuideTourButton(false);
+      }
+    }
+  }, []);
+
+  const handleDismissTourButton = () => {
+    setShowGuideTourButton(false);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("omnisync_hide_tour_button", "true");
+    }
+  };
 
   // Workspace state
   const [fileTree, setFileTree] = useState<FileNode[]>([]);
@@ -79,6 +99,41 @@ export default function DashboardPage() {
   const [actionOutput, setActionOutput] = useState<{ success: boolean; output: string } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showNotification = (message: string, type: "info" | "success" | "error" = "info", duration = 4000) => {
+    // 1. Try showing a system notification first
+    if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+      try {
+        new window.Notification("OmniSync", {
+          body: message,
+        });
+        return; // Skip internal toast
+      } catch (err) {
+        console.error("System notification failed, falling back to toast:", err);
+      }
+    }
+
+    // 2. Fallback: Show internal redesigned toast
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current);
+    }
+
+    setToast({ message, type });
+
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null);
+    }, duration);
+  };
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "default") {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
   const [launchOptions, setLaunchOptions] = useState<string[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
   const [isLiveTerminalActive, setIsLiveTerminalActive] = useState(false);
@@ -310,7 +365,7 @@ export default function DashboardPage() {
   // Auto check diagnostics & trigger installation if needed
   const checkAndInstallDependencies = async (diagnostics: DiagnosticDetails) => {
     if (diagnostics.missingDependencies && diagnostics.missingDependencies.length > 0) {
-      setToast({ message: "Auto-installing missing workspace dependencies...", type: "info" });
+      showNotification("Auto-installing missing workspace dependencies...", "info");
       setIsLiveTerminalActive(true);
       setDiagnosticLogs([]);
       
@@ -350,8 +405,7 @@ export default function DashboardPage() {
           }
         }
 
-        setToast({ message: "Dependencies installed successfully!", type: "success" });
-        setTimeout(() => setToast(null), 4000);
+        showNotification("Dependencies installed successfully!", "success");
         
         // Reload diagnostics after install completes
         const reloadRes = await fetch("/api/workspace/diagnostics");
@@ -359,8 +413,7 @@ export default function DashboardPage() {
         setDiagData(reloadData as DiagnosticDetails);
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        setToast({ message: `Dependency installation failed: ${errMsg}`, type: "error" });
-        setTimeout(() => setToast(null), 5000);
+        showNotification(`Dependency installation failed: ${errMsg}`, "error", 5000);
       } finally {
         setIsLiveTerminalActive(false);
       }
@@ -374,18 +427,35 @@ export default function DashboardPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type, port: 3000 }),
       });
-      setToast({
-        message: `Launching ${type === "xcode" ? "Xcode Workspace" : type === "electron" ? "Electron App" : "Local Browser"}...`,
-        type: "success",
-      });
-      setTimeout(() => setToast(null), 3000);
+      showNotification(
+        `Launching ${type === "xcode" ? "Xcode Workspace" : type === "electron" ? "Electron App" : "Local Browser"}...`,
+        "success",
+        3000
+      );
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      setToast({ message: `Launch failed: ${errMsg}`, type: "error" });
-      setTimeout(() => setToast(null), 4000);
+      showNotification(`Launch failed: ${errMsg}`, "error", 4000);
     }
   };
-
+  const handleLaunchIde = async (ideId: string, ideName: string) => {
+    setIsIdeDropdownOpen(false);
+    try {
+      const res = await fetch("/api/workspace/launch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "ide", ide: ideId }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showNotification(`Successfully launched codebase in ${ideName}!`, "success", 3000);
+      } else {
+        showNotification(`Failed to launch ${ideName}: ${data.error || "Launch command error"}`, "error", 3000);
+      }
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      showNotification(`Launch failed: ${errMsg}`, "error", 4000);
+    }
+  };
   // 2. Load Workspace details once profile is loaded
   useEffect(() => {
     if (!activeProfile) return;
@@ -410,6 +480,11 @@ export default function DashboardPage() {
 
   // 3. Poll runner logs and status while running
   useEffect(() => {
+    const isRunnerActive = runnerStatus?.status === "running" || runnerStatus?.status === "starting";
+    if (!isRunnerActive) {
+      return;
+    }
+
     async function checkRunner() {
       try {
         const res = await fetch("/api/workspace/runner");
@@ -430,9 +505,10 @@ export default function DashboardPage() {
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
-  }, []);
+  }, [runnerStatus?.status]);
 
   // 4. Load selected file content
   useEffect(() => {
@@ -672,24 +748,49 @@ export default function DashboardPage() {
     <div className="app-container">
       {/* Toast Notification */}
       {toast && (
-        <div className="fixed top-md right-md z-[99999] animate-fade-slide pointer-events-none select-none">
-          <div className={`p-md rounded-xl border shadow-xl flex items-center gap-sm bg-[#161b22] ${
-            toast.type === "success"
-              ? "border-[#3fb950]/50 text-[#3fb950]"
-              : toast.type === "error"
-              ? "border-[#f85149]/50 text-[#f85149]"
-              : "border-[#58a6ff]/50 text-[#58a6ff]"
-          }`}>
+        <div className="fixed top-md right-md z-[99999] animate-fade-slide pointer-events-none select-none" style={{ maxWidth: "360px" }}>
+          <div style={{
+            padding: "12px 18px",
+            borderRadius: "10px",
+            border: `1px solid ${
+              toast.type === "success" ? "rgba(63, 185, 80, 0.4)" : toast.type === "error" ? "rgba(248, 81, 73, 0.4)" : "rgba(88, 166, 255, 0.4)"
+            }`,
+            backgroundColor: "rgba(22, 27, 34, 0.85)",
+            backdropFilter: "blur(12px)",
+            boxShadow: "0 10px 30px rgba(0, 0, 0, 0.5)",
+            color: "var(--color-fg-default)",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+            position: "relative",
+            overflow: "hidden",
+          }}>
             {toast.type === "info" && (
               <div className="w-4 h-4 border-2 border-[#58a6ff]/20 border-t-[#58a6ff] rounded-full animate-spin shrink-0"></div>
             )}
             {toast.type === "success" && (
-              <span className="material-symbols-outlined text-[18px] text-[#3fb950] shrink-0">check_circle</span>
+              <span className="material-symbols-outlined text-[18px] text-[#3fb950] shrink-0" style={{ fontWeight: 700 }}>check_circle</span>
             )}
             {toast.type === "error" && (
-              <span className="material-symbols-outlined text-[18px] text-[#f85149] shrink-0">error</span>
+              <span className="material-symbols-outlined text-[18px] text-[#f85149] shrink-0" style={{ fontWeight: 700 }}>error</span>
             )}
-            <span className="font-button-text font-semibold text-[13px]">{toast.message}</span>
+            <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+              <span style={{ fontSize: "10px", fontWeight: 700, textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
+                {toast.type === "success" ? "Success" : toast.type === "error" ? "Error" : "System Notification"}
+              </span>
+              <span className="font-button-text font-semibold text-[13px]">{toast.message}</span>
+            </div>
+            
+            {/* Progress Bar */}
+            <div style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              height: "3px",
+              backgroundColor: toast.type === "success" ? "#3fb950" : toast.type === "error" ? "#f85149" : "#58a6ff",
+              width: "100%",
+              animation: "toastProgress 4.05s linear forwards",
+            }} />
           </div>
         </div>
       )}
@@ -710,78 +811,132 @@ export default function DashboardPage() {
             <div style={{ fontWeight: 600, color: "var(--color-header-text)" }}>{activeProfile?.name}</div>
             <div style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>{activeProfile?.profession}</div>
           </div>
-          
-          <button className="btn btn-sm" onClick={() => {
-            router.push("/setup");
-          }}>
-            Switch Workspace
-          </button>
+
+          {showGuideTourButton && (
+            <div style={{ display: "flex", alignItems: "center", gap: "2px", backgroundColor: "rgba(88, 166, 255, 0.15)", borderRadius: "6px", padding: "2px", border: "1px solid var(--color-accent-border)" }}>
+              <Tooltip content="Launch interactive guided tour" position="bottom">
+                <button
+                  className="btn btn-sm"
+                  onClick={() => setTourOpen(true)}
+                  style={{
+                    backgroundColor: "transparent",
+                    border: "none",
+                    color: "var(--color-accent-fg)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "4px",
+                    fontWeight: 600,
+                    fontSize: "12px",
+                    height: "24px",
+                    padding: "0 8px",
+                  }}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "14px", fontWeight: 700 }}>help</span>
+                  Guide Tour
+                </button>
+              </Tooltip>
+              <Tooltip content="Hide tour button permanently" position="bottom">
+                <button
+                  onClick={handleDismissTourButton}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--color-fg-muted)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: "20px",
+                    height: "20px",
+                    borderRadius: "50%",
+                    fontSize: "10px",
+                  }}
+                >
+                  ✕
+                </button>
+              </Tooltip>
+            </div>
+          )}
+
+          <Tooltip content="Switch active developer profile" position="bottom">
+            <button className="btn btn-sm" onClick={() => {
+              router.push("/setup");
+            }}>
+              Switch Workspace
+            </button>
+          </Tooltip>
         </div>
       </header>
 
       {/* Main Core Layout */}
       <div className="main-layout">
         {/* Leftmost Sidebar tabs */}
-        <nav className="sidebar">
-          <button
-            onClick={() => setActiveTab("workspace")}
-            className={`sidebar-btn ${activeTab === "workspace" ? "active" : ""}`}
-            title="Code Workspace"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="16 18 22 12 16 6" />
-              <polyline points="8 6 2 12 8 18" />
-            </svg>
-          </button>
+        <nav className="sidebar" id="tour-sidebar">
+          <Tooltip content="Workspace Editor & Server" position="right">
+            <button
+              onClick={() => setActiveTab("workspace")}
+              className={`sidebar-btn ${activeTab === "workspace" ? "active" : ""}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+            </button>
+          </Tooltip>
  
-          <button
-            onClick={() => setActiveTab("git")}
-            className={`sidebar-btn ${activeTab === "git" ? "active" : ""}`}
-            title="Git Collaboration & Merges"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="6" y1="3" x2="6" y2="15" />
-              <circle cx="18" cy="6" r="3" />
-              <circle cx="6" cy="18" r="3" />
-              <path d="M18 9a9 9 0 0 1-9 9" />
-            </svg>
-          </button>
+          <Tooltip content="Git Sync & Collaboration" position="right">
+            <button
+              onClick={() => setActiveTab("git")}
+              className={`sidebar-btn ${activeTab === "git" ? "active" : ""}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="6" y1="3" x2="6" y2="15" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <path d="M18 9a9 9 0 0 1-9 9" />
+              </svg>
+            </button>
+          </Tooltip>
  
-          <button
-            onClick={() => setActiveTab("diagnostics")}
-            className={`sidebar-btn ${activeTab === "diagnostics" ? "active" : ""}`}
-            title="Diagnostics Dashboard"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-          </button>
+          <Tooltip content="Environment Diagnostics" position="right">
+            <button
+              id="tour-diagnostics-btn"
+              onClick={() => setActiveTab("diagnostics")}
+              className={`sidebar-btn ${activeTab === "diagnostics" ? "active" : ""}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+            </button>
+          </Tooltip>
  
-          <button
-            onClick={() => setActiveTab("timeline")}
-            className={`sidebar-btn ${activeTab === "timeline" ? "active" : ""}`}
-            title="Commit History Timeline Calendar"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-              <line x1="16" y1="2" x2="16" y2="6" />
-              <line x1="8" y1="2" x2="8" y2="6" />
-              <line x1="3" y1="10" x2="21" y2="10" />
-            </svg>
-          </button>
+          <Tooltip content="Contribution Heatmap & Logs" position="right">
+            <button
+              onClick={() => setActiveTab("timeline")}
+              className={`sidebar-btn ${activeTab === "timeline" ? "active" : ""}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+            </button>
+          </Tooltip>
 
-          <button
-            onClick={() => setActiveTab("settings")}
-            className={`sidebar-btn ${activeTab === "settings" ? "active" : ""}`}
-            title="Workspace Settings"
-            style={{ marginTop: "auto" }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
+          <Tooltip content="Workspace Settings" position="right">
+            <button
+              onClick={() => setActiveTab("settings")}
+              className={`sidebar-btn ${activeTab === "settings" ? "active" : ""}`}
+              style={{ marginTop: "auto" }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+            </button>
+          </Tooltip>
         </nav>
 
         {/* Tab views switcher panels */}
@@ -800,28 +955,31 @@ export default function DashboardPage() {
                 flexShrink: 0,
               }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <button
-                    onClick={handleToggleRunner}
-                    disabled={isRunnerLoading}
-                    className={`btn ${runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? "btn-danger" : "btn-primary"}`}
-                    style={{ minWidth: "120px" }}
-                  >
-                    {isRunnerLoading ? (
-                      <div className="spinner" style={{ width: "12px", height: "12px" }}></div>
-                    ) : runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? (
-                      <>
-                        <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "white", marginRight: "4px" }}></span>
-                        Stop Server
-                      </>
-                    ) : (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: "4px" }}>
-                          <polygon points="5 3 19 12 5 21 5 3" />
-                        </svg>
-                        Run Server
-                      </>
-                    )}
-                  </button>
+                  <Tooltip content={runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? "Terminate active development server" : "Launch local development server"} position="bottom">
+                    <button
+                      id="tour-runner"
+                      onClick={handleToggleRunner}
+                      disabled={isRunnerLoading}
+                      className={`btn ${runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? "btn-danger" : "btn-primary"}`}
+                      style={{ minWidth: "120px" }}
+                    >
+                      {isRunnerLoading ? (
+                        <div className="spinner" style={{ width: "12px", height: "12px" }}></div>
+                      ) : runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? (
+                        <>
+                          <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "white", marginRight: "4px" }}></span>
+                          Stop Server
+                        </>
+                      ) : (
+                        <>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: "4px" }}>
+                            <polygon points="5 3 19 12 5 21 5 3" />
+                          </svg>
+                          Run Server
+                        </>
+                      )}
+                    </button>
+                  </Tooltip>
 
                   <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", display: "flex", alignItems: "center", gap: "8px" }}>
                     {runnerStatus?.status === "running" && <span style={{ color: "var(--color-success-fg)", fontWeight: 600 }}>Active (PID: {runnerStatus?.pid})</span>}
@@ -832,70 +990,76 @@ export default function DashboardPage() {
                     {runnerStatus?.status === "running" && (
                       <div style={{ display: "flex", alignItems: "center", gap: "6px", marginLeft: "8px" }}>
                         {launchOptions.includes("browser") && (
-                          <button
-                            type="button"
-                            onClick={() => handleLaunchTarget("browser")}
-                            className="btn btn-sm"
-                            style={{
-                              backgroundColor: "rgba(56, 139, 253, 0.15)",
-                              borderColor: "rgba(56, 139, 253, 0.4)",
-                              color: "var(--color-accent-fg)",
-                              fontWeight: 650,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                              padding: "2px 8px",
-                              fontSize: "11px",
-                              height: "26px"
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>open_in_new</span>
-                            Launch Browser
-                          </button>
+                          <Tooltip content="Open web application in your default browser" position="bottom">
+                            <button
+                              type="button"
+                              onClick={() => handleLaunchTarget("browser")}
+                              className="btn btn-sm"
+                              style={{
+                                backgroundColor: "rgba(56, 139, 253, 0.15)",
+                                borderColor: "rgba(56, 139, 253, 0.4)",
+                                color: "var(--color-accent-fg)",
+                                fontWeight: 650,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px 8px",
+                                fontSize: "11px",
+                                height: "26px"
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>open_in_new</span>
+                              Launch Browser
+                            </button>
+                          </Tooltip>
                         )}
                         {launchOptions.includes("electron") && (
-                          <button
-                            type="button"
-                            onClick={() => handleLaunchTarget("electron")}
-                            className="btn btn-sm"
-                            style={{
-                              backgroundColor: "rgba(63, 185, 80, 0.15)",
-                              borderColor: "rgba(63, 185, 80, 0.4)",
-                              color: "var(--color-success-fg)",
-                              fontWeight: 650,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                              padding: "2px 8px",
-                              fontSize: "11px",
-                              height: "26px"
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>devices</span>
-                            Launch Electron App
-                          </button>
+                          <Tooltip content="Open application window using Electron frame" position="bottom">
+                            <button
+                              type="button"
+                              onClick={() => handleLaunchTarget("electron")}
+                              className="btn btn-sm"
+                              style={{
+                                backgroundColor: "rgba(63, 185, 80, 0.15)",
+                                borderColor: "rgba(63, 185, 80, 0.4)",
+                                color: "var(--color-success-fg)",
+                                fontWeight: 650,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px 8px",
+                                fontSize: "11px",
+                                height: "26px"
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>devices</span>
+                              Launch Electron App
+                            </button>
+                          </Tooltip>
                         )}
                         {launchOptions.includes("xcode") && (
-                          <button
-                            type="button"
-                            onClick={() => handleLaunchTarget("xcode")}
-                            className="btn btn-sm"
-                            style={{
-                              backgroundColor: "rgba(210, 153, 34, 0.15)",
-                              borderColor: "rgba(210, 153, 34, 0.4)",
-                              color: "var(--color-attention-fg)",
-                              fontWeight: 650,
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "4px",
-                              padding: "2px 8px",
-                              fontSize: "11px",
-                              height: "26px"
-                            }}
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>terminal</span>
-                            Open Xcode
-                          </button>
+                          <Tooltip content="Open Xcode simulator framework" position="bottom">
+                            <button
+                              type="button"
+                              onClick={() => handleLaunchTarget("xcode")}
+                              className="btn btn-sm"
+                              style={{
+                                backgroundColor: "rgba(210, 153, 34, 0.15)",
+                                borderColor: "rgba(210, 153, 34, 0.4)",
+                                color: "var(--color-attention-fg)",
+                                fontWeight: 650,
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px",
+                                padding: "2px 8px",
+                                fontSize: "11px",
+                                height: "26px"
+                              }}
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>terminal</span>
+                              Open Xcode
+                            </button>
+                          </Tooltip>
                         )}
                       </div>
                     )}
@@ -904,17 +1068,95 @@ export default function DashboardPage() {
 
                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                   <span style={{ fontSize: "12px", color: "var(--color-fg-muted)" }}>Active Branch:</span>
-                  <select
-                    className="form-control"
-                    style={{ width: "150px", padding: "3px 8px", fontSize: "13px" }}
-                    value={currentBranch}
-                    onChange={handleBranchChange}
-                    disabled={isChangingBranch}
-                  >
-                    {branches.map((b) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
+                  <Tooltip content="Select active repository branch to sync" position="bottom">
+                    <select
+                      id="tour-branch"
+                      className="form-control"
+                      style={{ width: "150px", padding: "3px 8px", fontSize: "13px" }}
+                      value={currentBranch}
+                      onChange={handleBranchChange}
+                      disabled={isChangingBranch}
+                    >
+                      {branches.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  </Tooltip>
+
+                  {/* Open in IDE Dropdown Container */}
+                  <div style={{ position: "relative" }}>
+                    <Tooltip content="Open codebase in an IDE" position="bottom">
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => setIsIdeDropdownOpen(!isIdeDropdownOpen)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          height: "28px",
+                          padding: "2px 10px",
+                          fontSize: "12px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>code</span>
+                        Open in
+                      </button>
+                    </Tooltip>
+
+                    {isIdeDropdownOpen && (
+                      <div style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "32px",
+                        backgroundColor: "var(--color-bg-overlay)",
+                        border: "1px solid var(--color-border-default)",
+                        borderRadius: "8px",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+                        zIndex: 100,
+                        width: "180px",
+                        display: "flex",
+                        flexDirection: "column",
+                        padding: "6px",
+                      }}>
+                        {[
+                          { id: "vscode", label: "VS Code", path: "M23.15 2.587L18.21.21a1.494 1.494 0 0 0-1.705.29l-9.46 8.63-4.56-3.46c-.47-.357-1.127-.32-1.562.094L.29 6.398a1.117 1.117 0 0 0-.056 1.578l3.666 3.99-3.666 3.99a1.117 1.117 0 0 0 .056 1.578l.634.624c.435.414 1.092.45 1.562.094l4.56-3.46 9.46 8.63c.484.447 1.22.56 1.705.29l4.94-2.377A1.5 1.5 0 0 0 24 20.06V3.939a1.5 1.5 0 0 0-.85-1.352zm-5.15 10.742l-5.69-4.226 5.69-4.226v8.452z" },
+                          { id: "zed", label: "Zed Editor", path: "M24 9.429V17h-2.571l-3.429-3.429h-.857v-4.142h2.571v2.571l3.429 3.429v-6zm-12 0h2.571v4.143H12v-2.572l-3.429-3.429v6H6V7h2.571l3.429 3.429z" },
+                          { id: "intellij", label: "IntelliJ IDEA", path: "M0 0v24h24V0H0zm5.176 3.03h2.64v1.89h-2.64v-1.89zm1.096 15.688c-1.376 0-2.304-1.088-2.304-2.528c0-1.424.928-2.512 2.304-2.512c.608 0 1.152.208 1.584.576l-.816.944a1.325 1.325 0 0 0-.768-.288c-.688 0-1.12.56-1.12 1.28c0 .704.432 1.264 1.12 1.264c.336 0 .64-.128.848-.32v-.72H6.84v-1.008h2.096v2.304c-.496.48-1.184.72-1.808.72zm5.728-5.008h1.168v5.008h-1.168v-5.008zm3.264 0h1.168v5.008h-1.168v-5.008zm-6.192-3.84h1.056v3.296h-1.056V9.87zm3.168 0h1.056v3.296h-1.056V9.87zm4.784.096c0 .768-.528 1.296-1.248 1.296c-.336 0-.624-.128-.816-.32l-.656.736c.384.384.928.624 1.472.624c1.376 0 2.288-1.008 2.288-2.336v-3.488h-1.04v3.488zM4 20h16v-1.333H4V20z" },
+                          { id: "webstorm", label: "WebStorm", path: "M0 0v24h24V0H0zm5.176 3.03h2.64v1.89h-2.64v-1.89zm1.096 15.688c-1.376 0-2.304-1.088-2.304-2.528c0-1.424.928-2.512 2.304-2.512c.608 0 1.152.208 1.584.576l-.816.944a1.325 1.325 0 0 0-.768-.288c-.688 0-1.12.56-1.12 1.28c0 .704.432 1.264 1.12 1.264c.336 0 .64-.128.848-.32v-.72H6.84v-1.008h2.096v2.304c-.496.48-1.184.72-1.808.72zm5.728-5.008h1.168v5.008h-1.168v-5.008zm3.264 0h1.168v5.008h-1.168v-5.008zm-6.192-3.84h1.056v3.296h-1.056V9.87zm3.168 0h1.056v3.296h-1.056V9.87zm4.784.096c0 .768-.528 1.296-1.248 1.296c-.336 0-.624-.128-.816-.32l-.656.736c.384.384.928.624 1.472.624c1.376 0 2.288-1.008 2.288-2.336v-3.488h-1.04v3.488zM4 20h16v-1.333H4V20z" },
+                          { id: "xcode", label: "Xcode", path: "M21.2 5.09c-.27-.47-.84-.71-1.38-.59L15 5.68 12.35 1.5a1.731 1.731 0 0 0-2.7 0L7 5.68 2.18 4.5c-.54-.12-1.11.12-1.38.59a1.693 1.693 0 0 0 .17 1.83l3.52 4.14V13l-3.52 4.14a1.706 1.706 0 0 0-.17 1.83c.27.47.84.71 1.38.59l4.82-1.18 2.65 4.18c.32.5.88.8 1.48.8s1.16-.3 1.48-.8L15 18.52l4.82 1.18c.54.12 1.11-.12 1.38-.59c.27-.47.2-.1-.07-1.83l-3.52-4.14V11.14l3.52-4.14c.27-.47.34-1.36-.07-1.83zm-10.7.35a.863.863 0 0 1 1.5 0l2.36 3.73-2.36 3.73a.863.863 0 0 1-1.5 0L8.14 9.17l2.36-3.73zm-3.23 8.3L5.43 17.5a.863.863 0 0 1-1.5-.59v-7.46a.863.863 0 0 1 1.5-.59l1.84 3.76v.38zm9.46-.38l1.84-3.76a.863.863 0 0 1 1.5.59v7.46a.863.863 0 0 1-1.5.59l-1.84-3.76v-.38L16.73 13.36z" },
+                          { id: "antigravity", label: "Antigravity", path: "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" },
+                          { id: "codex", label: "Codex", path: "M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14H7v-2h3v2zm3-4H7v-2h6v2zm3-4H7V7h9v2z" },
+                        ].map((ide) => (
+                          <button
+                            key={ide.id}
+                            type="button"
+                            onClick={() => handleLaunchIde(ide.id, ide.label)}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "8px",
+                              padding: "8px 10px",
+                              backgroundColor: "transparent",
+                              border: "none",
+                              color: "var(--color-fg-default)",
+                              fontSize: "12px",
+                              textAlign: "left",
+                              cursor: "pointer",
+                              borderRadius: "4px",
+                              width: "100%",
+                            }}
+                            className="hover-bg-active"
+                          >
+                            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style={{ flexShrink: 0 }}>
+                              <path d={ide.path} />
+                            </svg>
+                            <span style={{ flex: 1 }}>{ide.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -928,6 +1170,8 @@ export default function DashboardPage() {
                   display: "flex",
                   flexDirection: "column",
                   flexShrink: 0,
+                  height: "100%",
+                  minHeight: 0,
                 }}>
                   <div style={{ padding: "12px 16px 4px 16px", fontSize: "11px", fontWeight: "600", textTransform: "uppercase", color: "var(--color-fg-muted)" }}>
                     Workspace Files
@@ -964,7 +1208,7 @@ export default function DashboardPage() {
                 />
 
                 {/* Column 2: Code Viewer with Tabs */}
-                <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
                   {/* VS Code Style Tab Bar */}
                   {openFiles.length > 0 && (
                     <div style={{
@@ -993,7 +1237,6 @@ export default function DashboardPage() {
                               borderRight: "1px solid var(--color-border-default)",
                               cursor: "pointer",
                               userSelect: "none",
-                              borderTop: isActive ? "2px solid var(--color-accent-fg)" : "2px solid transparent",
                               position: "relative",
                               transition: "all 0.15s cubic-bezier(0.16, 1, 0.3, 1)",
                             }}
@@ -1060,6 +1303,8 @@ export default function DashboardPage() {
                   width: `${rightWidth}px`,
                   overflow: "hidden",
                   flexShrink: 0,
+                  height: "100%",
+                  minHeight: 0,
                 }}>
                   <DiffViewer selectedFile={activeFile} />
                 </div>
@@ -1241,7 +1486,7 @@ export default function DashboardPage() {
                             }}
                           >
                             <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
-                              <span style={{ color: "var(--color-danger-fg)" }}>⚡</span>
+                              <span className="material-symbols-outlined" style={{ fontSize: "14px", color: "var(--color-danger-fg)", fontWeight: 700 }}>error</span>
                               <span>{file.split("/").pop()}</span>
                             </div>
                             <div style={{ fontSize: "10px", color: "var(--color-fg-muted)", wordBreak: "break-all", fontFamily: "var(--font-mono)" }}>
@@ -1288,9 +1533,8 @@ export default function DashboardPage() {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: "24px",
                     }}>
-                      🔀
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-fg"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M22 12H2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                     </div>
                     
                     <div>
@@ -1669,9 +1913,10 @@ export default function DashboardPage() {
                               opacity: calendarYear <= repoStartYear ? 0.4 : 1,
                               cursor: calendarYear <= repoStartYear ? "not-allowed" : "pointer"
                             }}
-                            title={`Previous Year${calendarYear <= repoStartYear ? ' (Limit reached)' : ''}`}
                           >
-                            &lt;
+                           <Tooltip content={calendarYear <= repoStartYear ? "Limit reached (no older commits)" : "Go to previous year commit calendar"} position="top">
+                             &lt;
+                           </Tooltip>
                           </button>
                           <span style={{ fontSize: "11px", fontWeight: "700", color: "var(--color-fg-default)", minWidth: "36px", textAlign: "center" }}>
                             {calendarYear}
@@ -1693,9 +1938,10 @@ export default function DashboardPage() {
                               opacity: calendarYear >= currentYear ? 0.4 : 1,
                               cursor: calendarYear >= currentYear ? "not-allowed" : "pointer"
                             }}
-                            title={`Next Year${calendarYear >= currentYear ? ' (Limit reached)' : ''}`}
                           >
-                            &gt;
+                           <Tooltip content={calendarYear >= currentYear ? "Limit reached (current year)" : "Go to next year commit calendar"} position="top">
+                             &gt;
+                           </Tooltip>
                           </button>
                         </div>
 
@@ -1773,24 +2019,28 @@ export default function DashboardPage() {
                               }
 
                               return (
-                                <div
+                                <Tooltip
                                   key={`dot-${idx}`}
-                                  onClick={() => handleSquareClick(dateString, date)}
-                                  title={`${count} commit${count === 1 ? "" : "s"} on ${date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`}
-                                  style={{
-                                    gridColumnStart: colIdx + 2,
-                                    gridRowStart: dayOfWeek + 2,
-                                    width: "10px",
-                                    height: "10px",
-                                    borderRadius: "2px",
-                                    backgroundColor: color,
-                                    cursor: "pointer",
-                                    transition: "transform 0.1s ease, box-shadow 0.1s ease",
-                                    boxShadow: isSelected ? "0 0 0 1.5px var(--color-accent-fg)" : "none",
-                                    zIndex: isSelected ? 2 : 1,
-                                  }}
-                                  className="contribution-square"
-                                />
+                                  content={`${count} commit${count === 1 ? "" : "s"} on ${date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`}
+                                  position="top"
+                                >
+                                  <div
+                                    onClick={() => handleSquareClick(dateString, date)}
+                                    style={{
+                                      gridColumnStart: colIdx + 2,
+                                      gridRowStart: dayOfWeek + 2,
+                                      width: "10px",
+                                      height: "10px",
+                                      borderRadius: "2px",
+                                      backgroundColor: color,
+                                      cursor: "pointer",
+                                      transition: "transform 0.1s ease, box-shadow 0.1s ease",
+                                      boxShadow: isSelected ? "0 0 0 1.5px var(--color-accent-fg)" : "none",
+                                      zIndex: isSelected ? 2 : 1,
+                                    }}
+                                    className="contribution-square"
+                                  />
+                                </Tooltip>
                               );
                             })}
                           </div>
@@ -1858,35 +2108,38 @@ export default function DashboardPage() {
                       </div>
 
                       <div style={{ display: "flex", gap: "8px" }}>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => {
-                            if (allCommits.length === 0) return;
-                            const oldest = allCommits[allCommits.length - 1];
-                            if (oldest && oldest.date) {
-                              const d = new Date(oldest.date);
-                              setCalendarYear(d.getFullYear());
-                              setCalendarMonth(d.getMonth());
-                              setSelectedCalendarDate(oldest.date);
-                            }
-                          }}
-                          style={{ fontSize: "11px", padding: "4px 10px" }}
-                          title="Jump to the first commit of the repository"
-                        >
-                          Repo Start ⇤
-                        </button>
+                        <Tooltip content="Jump to the very first commit of the repository" position="top">
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => {
+                              if (allCommits.length === 0) return;
+                              const oldest = allCommits[allCommits.length - 1];
+                              if (oldest && oldest.date) {
+                                const d = new Date(oldest.date);
+                                setCalendarYear(d.getFullYear());
+                                setCalendarMonth(d.getMonth());
+                                setSelectedCalendarDate(oldest.date);
+                              }
+                            }}
+                            style={{ fontSize: "11px", padding: "4px 10px" }}
+                          >
+                            Repo Start ⇤
+                          </button>
+                        </Tooltip>
 
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => {
-                            const today = new Date();
-                            setCalendarYear(today.getFullYear());
-                            setCalendarMonth(today.getMonth());
-                          }}
-                          style={{ fontSize: "11px", padding: "4px 10px" }}
-                        >
-                          Today
-                        </button>
+                        <Tooltip content="Jump to the current month & year calendar view" position="top">
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => {
+                              const today = new Date();
+                              setCalendarYear(today.getFullYear());
+                              setCalendarMonth(today.getMonth());
+                            }}
+                            style={{ fontSize: "11px", padding: "4px 10px" }}
+                          >
+                            Today
+                          </button>
+                        </Tooltip>
                       </div>
                     </div>
 
@@ -1958,7 +2211,7 @@ export default function DashboardPage() {
                                   <span className={`badge ${hasMerges ? "badge-danger" : "badge-success"}`} style={{ fontSize: "9px", padding: "1px 4px" }}>
                                     {dayCommits.length}
                                   </span>
-                                  {hasMerges && <span style={{ fontSize: "8px", color: "var(--color-danger-fg)", fontWeight: "bold" }}>🔀</span>}
+                                  {hasMerges && <span style={{ fontSize: "9px", color: "var(--color-danger-fg)", fontWeight: "bold" }}>M</span>}
                                 </div>
                               )}
                             </div>
@@ -2083,6 +2336,13 @@ export default function DashboardPage() {
           )}
         </main>
       </div>
+
+      <ProductTour
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        isOpenExternally={tourOpen}
+        onCloseExternally={() => setTourOpen(false)}
+      />
     </div>
   );
 }

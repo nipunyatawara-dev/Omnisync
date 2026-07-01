@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 import ElectronDragHelper from "@/components/ElectronDragHelper";
+import FirstLaunchSplash from "@/components/FirstLaunchSplash";
 
 export default function RootLayout({
   children,
@@ -34,6 +35,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col">
         <ElectronDragHelper />
+        <FirstLaunchSplash />
         {children}
       </body>
     </html>

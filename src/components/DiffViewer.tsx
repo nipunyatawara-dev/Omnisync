@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { GitCommit, DiffLine } from "@/lib/git";
+import Tooltip from "@/components/Tooltip";
 
 interface DiffViewerProps {
   selectedFile: string | null;
@@ -179,47 +180,60 @@ export default function DiffViewer({ selectedFile }: DiffViewerProps) {
     <div ref={containerRef} style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {/* Commit History Timeline (Top Half) */}
       <div style={{
-        height: isTimelineCollapsed ? "42px" : isDiffCollapsed ? "auto" : `${timelineHeight}px`,
+        height: isTimelineCollapsed ? "42px" : isDiffCollapsed ? "0px" : `${timelineHeight}px`,
         flex: isDiffCollapsed ? 1 : "none",
         overflowY: isTimelineCollapsed ? "hidden" : "auto",
         borderBottom: isTimelineCollapsed ? "1px solid var(--color-border-default)" : "none",
         padding: "12px",
         display: "flex",
         flexDirection: "column",
+        minHeight: 0,
         transition: "height 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px", flexShrink: 0 }}>
+        <div 
+          onClick={() => setIsTimelineCollapsed(!isTimelineCollapsed)}
+          style={{ 
+            display: "flex", 
+            justifyContent: "space-between", 
+            alignItems: "center", 
+            marginBottom: "8px", 
+            flexShrink: 0,
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+        >
           <h3 style={{ fontSize: "12px", fontWeight: "600", textTransform: "uppercase", color: "var(--color-fg-muted)", margin: 0 }}>
             Commit Timeline
           </h3>
-          <button
-            onClick={() => setIsTimelineCollapsed(!isTimelineCollapsed)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--color-fg-muted)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "4px",
-              borderRadius: "4px",
-              transition: "background-color 0.1s",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--color-bg-active)"}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
-            title={isTimelineCollapsed ? "Expand" : "Collapse"}
-          >
-            <span style={{
-              display: "inline-block",
-              transform: isTimelineCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
-              transition: "transform 0.15s ease",
-              fontSize: "10px",
-              lineHeight: 1,
-            }}>
-              ▼
-            </span>
-          </button>
+          <Tooltip content={isTimelineCollapsed ? "Expand History Panel" : "Collapse History Panel"} position="left">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsTimelineCollapsed(!isTimelineCollapsed);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--color-fg-muted)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "4px",
+                borderRadius: "4px",
+                transition: "background-color 0.1s",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--color-bg-active)"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+            >
+              <span className="material-symbols-outlined" style={{
+                fontSize: "16px",
+                transition: "transform 0.15s ease",
+              }}>
+                {isTimelineCollapsed ? "expand_more" : "expand_less"}
+              </span>
+            </button>
+          </Tooltip>
         </div>
         
         {!isTimelineCollapsed && (
@@ -294,55 +308,62 @@ export default function DiffViewer({ selectedFile }: DiffViewerProps) {
       {/* Diff Analyzer (Bottom Half) */}
       <div style={{
         flex: isTimelineCollapsed ? 1 : isDiffCollapsed ? "none" : 1,
-        height: isDiffCollapsed ? "42px" : "auto",
+        height: isDiffCollapsed ? "42px" : "0px",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
+        minHeight: 0,
         borderTop: isTimelineCollapsed ? "none" : "1px solid var(--color-border-default)",
         transition: "height 0.2s cubic-bezier(0.16, 1, 0.3, 1)",
       }}>
-        <div style={{
-          padding: "8px 12px",
-          backgroundColor: "var(--color-bg-subtle)",
-          borderBottom: "1px solid var(--color-border-default)",
-          fontSize: "12px",
-          fontWeight: 600,
-          color: "var(--color-fg-muted)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          flexShrink: 0,
-          height: "42px",
-        }}>
+        <div 
+          onClick={() => setIsDiffCollapsed(!isDiffCollapsed)}
+          style={{
+            padding: "8px 12px",
+            backgroundColor: "var(--color-bg-subtle)",
+            borderBottom: "1px solid var(--color-border-default)",
+            fontSize: "12px",
+            fontWeight: 600,
+            color: "var(--color-fg-muted)",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexShrink: 0,
+            height: "42px",
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+        >
           <span>Line Diff Analyzer</span>
-          <button
-            onClick={() => setIsDiffCollapsed(!isDiffCollapsed)}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--color-fg-muted)",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "4px",
-              borderRadius: "4px",
-              transition: "background-color 0.1s",
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--color-bg-active)"}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
-            title={isDiffCollapsed ? "Expand" : "Collapse"}
-          >
-            <span style={{
-              display: "inline-block",
-              transform: isDiffCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
-              transition: "transform 0.15s ease",
-              fontSize: "10px",
-              lineHeight: 1,
-            }}>
-              ▼
-            </span>
-          </button>
+          <Tooltip content={isDiffCollapsed ? "Expand Diff View" : "Collapse Diff View"} position="left">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsDiffCollapsed(!isDiffCollapsed);
+              }}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--color-fg-muted)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "4px",
+                borderRadius: "4px",
+                transition: "background-color 0.1s",
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = "var(--color-bg-active)"}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = "transparent"}
+            >
+              <span className="material-symbols-outlined" style={{
+                fontSize: "16px",
+                transition: "transform 0.15s ease",
+              }}>
+                {isDiffCollapsed ? "expand_less" : "expand_more"}
+              </span>
+            </button>
+          </Tooltip>
         </div>
 
         {!isDiffCollapsed && (

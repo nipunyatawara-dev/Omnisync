@@ -22,15 +22,30 @@ const IGNORE_DIRS = new Set([
   "User data",
 ]);
 
-async function buildFileTree(dirPath: string, rootPath: string): Promise<FileNode[]> {
+async function buildFileTree(
+  dirPath: string,
+  rootPath: string,
+  depth = 0,
+  maxDepth = 15,
+  visited = new Set<string>()
+): Promise<FileNode[]> {
+  const resolvedPath = path.resolve(dirPath);
+  if (depth > maxDepth || visited.has(resolvedPath)) {
+    return [];
+  }
+  
+  // Clone visited set to pass down the tree branch (prevents cross-sibling pollution)
+  const currentVisited = new Set(visited);
+  currentVisited.add(resolvedPath);
+
   try {
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
     const nodes: FileNode[] = [];
 
     for (const entry of entries) {
       if (IGNORE_DIRS.has(entry.name)) continue;
 
-      const fullPath = path.join(dirPath, entry.name);
+      const fullPath = path.join(resolvedPath, entry.name);
       const relativePath = path.relative(rootPath, fullPath);
 
       const node: FileNode = {
@@ -41,7 +56,7 @@ async function buildFileTree(dirPath: string, rootPath: string): Promise<FileNod
       };
 
       if (node.isDirectory) {
-        node.children = await buildFileTree(fullPath, rootPath);
+        node.children = await buildFileTree(fullPath, rootPath, depth + 1, maxDepth, currentVisited);
       }
 
       nodes.push(node);
@@ -65,7 +80,7 @@ export async function GET() {
 
   try {
     const rootPath = path.resolve(profile.workspacePath);
-    const tree = await buildFileTree(rootPath, rootPath);
+    const tree = await buildFileTree(rootPath, rootPath, 0, 15, new Set<string>());
     return NextResponse.json({ tree, rootPath });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -61,7 +61,28 @@ export async function POST(request: Request) {
   const cwd = profile.workspacePath;
 
   try {
-    const { type, port } = await request.json();
+    const { type, port, ide } = await request.json();
+
+    if (type === "ide") {
+      let appName = "";
+      if (ide === "vscode") appName = "Visual Studio Code";
+      else if (ide === "zed") appName = "Zed";
+      else if (ide === "intellij") appName = "IntelliJ IDEA";
+      else if (ide === "webstorm") appName = "WebStorm";
+      else if (ide === "xcode") appName = "Xcode";
+      else if (ide === "antigravity") appName = "Antigravity";
+      else if (ide === "codex") appName = "Codex";
+
+      if (appName) {
+        exec(`open -a "${appName}" "${cwd}"`, (err) => {
+          if (err) {
+            console.error(`Failed to launch ${appName}:`, err);
+          }
+        });
+        return NextResponse.json({ success: true, launched: appName });
+      }
+      return NextResponse.json({ error: "Unsupported IDE target" }, { status: 400 });
+    }
 
     if (type === "browser") {
       const logs = getRunnerLogs();

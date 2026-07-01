@@ -228,6 +228,7 @@ input, select, textarea, button {
   height: 100vh;
   width: 100vw;
   background-color: var(--color-bg-default);
+  overflow: hidden;
 }
 
 .header {
@@ -267,6 +268,7 @@ input, select, textarea, button {
   padding: 16px 0;
   gap: 20px;
   flex-shrink: 0;
+  height: 100%;
 }
 
 .sidebar-btn {
@@ -1200,3 +1202,302 @@ body.electron-app a,
 body.electron-app [role="button"] {
   -webkit-app-region: no-drag !important;
 }
+
+/* ==========================================
+   CUSTOM TOOLTIPS & FLIGHT DECK STYLING
+   ========================================== */
+
+.custom-tooltip {
+  position: relative;
+  display: inline-flex;
+}
+
+.custom-tooltip-content {
+  position: absolute;
+  background-color: var(--color-bg-overlay);
+  color: var(--color-fg-default);
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-default);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1), transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+}
+
+/* Tooltip positions & arrows */
+.custom-tooltip-content::after {
+  content: "";
+  position: absolute;
+  border-width: 5px;
+  border-style: solid;
+}
+
+/* Right Position */
+.custom-tooltip-content.position-right {
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%) scale(0.95);
+}
+.custom-tooltip:hover .custom-tooltip-content.position-right {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) scale(1);
+}
+.custom-tooltip-content.position-right::after {
+  top: 50%;
+  right: 100%;
+  margin-top: -5px;
+  border-color: transparent var(--color-border-default) transparent transparent;
+}
+
+/* Left Position */
+.custom-tooltip-content.position-left {
+  top: 50%;
+  right: calc(100% + 8px);
+  transform: translateY(-50%) scale(0.95);
+}
+.custom-tooltip:hover .custom-tooltip-content.position-left {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(-50%) scale(1);
+}
+.custom-tooltip-content.position-left::after {
+  top: 50%;
+  left: 100%;
+  margin-top: -5px;
+  border-color: transparent transparent transparent var(--color-border-default);
+}
+
+/* Top Position */
+.custom-tooltip-content.position-top {
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+}
+.custom-tooltip:hover .custom-tooltip-content.position-top {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) scale(1);
+}
+.custom-tooltip-content.position-top::after {
+  top: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-color: var(--color-border-default) transparent transparent transparent;
+}
+
+/* Bottom Position */
+.custom-tooltip-content.position-bottom {
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.95);
+}
+.custom-tooltip:hover .custom-tooltip-content.position-bottom {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) scale(1);
+}
+.custom-tooltip-content.position-bottom::after {
+  bottom: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-color: transparent transparent var(--color-border-default) transparent;
+}
+
+
+/* ==========================================
+   FIRST LAUNCH ANIMATION (SPLASH SCREEN)
+   ========================================== */
+
+@keyframes pulseGlow {
+  0% {
+    transform: scale(0.96);
+    box-shadow: 0 0 15px rgba(88, 166, 255, 0.15);
+  }
+  50% {
+    transform: scale(1.04);
+    box-shadow: 0 0 35px rgba(88, 166, 255, 0.45);
+  }
+  100% {
+    transform: scale(0.96);
+    box-shadow: 0 0 15px rgba(88, 166, 255, 0.15);
+  }
+}
+
+@keyframes spinSync {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes loadingBar {
+  0% { width: 0%; }
+  100% { width: 100%; }
+}
+
+@keyframes fadeInScale {
+  0% { opacity: 0; transform: scale(0.95); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes textReveal {
+  0% { letter-spacing: -3px; opacity: 0; filter: blur(3px); }
+  100% { letter-spacing: 2px; opacity: 1; filter: blur(0); }
+}
+
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: #0d1117;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  transition: opacity 0.6s cubic-bezier(0.4, 0, 0.2, 1), transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.splash-overlay.fade-out {
+  opacity: 0;
+  transform: scale(1.05);
+  pointer-events: none;
+}
+
+.splash-logo-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: rgba(22, 27, 34, 0.6);
+  border: 1px solid var(--color-border-default);
+  margin-bottom: 24px;
+  animation: pulseGlow 2.5s infinite ease-in-out;
+}
+
+.splash-icon {
+  /* Logo spinning disabled */
+}
+
+.splash-title {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 800;
+  color: #ffffff;
+  margin: 0;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.1);
+  animation: textReveal 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.splash-subtitle {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--color-fg-muted);
+  margin-top: 8px;
+  margin-bottom: 32px;
+  opacity: 0;
+  animation: fadeInScale 0.8s ease-out 0.6s forwards;
+}
+
+.splash-progress-track {
+  width: 180px;
+  height: 3px;
+  background-color: var(--color-border-default);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.splash-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #58a6ff, #3fb950);
+  border-radius: 3px;
+  animation: loadingBar 1.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+
+/* ==========================================
+   PRODUCT TOUR (GUIDED POPUP TIPS)
+   ========================================== */
+
+.tour-overlay-container {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  pointer-events: auto;
+  background-color: rgba(0, 0, 0, 0.45);
+}
+
+.tour-spotlight-mask {
+  position: absolute;
+  border-radius: 6px;
+  box-shadow: 0 0 0 9999px rgba(10, 12, 16, 0.75);
+  border: 2px solid var(--color-accent-fg);
+  z-index: 9991;
+  pointer-events: none;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 0 9999px rgba(10, 12, 16, 0.75), inset 0 0 12px var(--color-accent-fg);
+}
+
+.tour-card {
+  z-index: 9995;
+  width: 320px;
+  background-color: var(--color-bg-overlay);
+  border: 1px solid var(--color-border-default);
+  border-radius: 10px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: fadeInScale 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+.tour-arrow {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border-style: solid;
+}
+
+.tour-arrow.arrow-right {
+  top: 50%;
+  right: 100%;
+  margin-top: -8px;
+  border-width: 8px 8px 8px 0;
+  border-color: transparent var(--color-border-default) transparent transparent;
+}
+
+.tour-arrow.arrow-left {
+  top: 50%;
+  left: 100%;
+  margin-top: -8px;
+  border-width: 8px 0 8px 8px;
+  border-color: transparent transparent transparent var(--color-border-default);
+}
+
+.tour-arrow.arrow-bottom {
+  bottom: 100%;
+  left: 50%;
+  margin-left: -8px;
+  border-width: 0 8px 8px 8px;
+  border-color: transparent transparent var(--color-border-default) transparent;
+}
+
+.tour-arrow.arrow-top {
+  top: 100%;
+  left: 50%;
+  margin-left: -8px;
+  border-width: 8px 8px 0 8px;
+  border-color: var(--color-border-default) transparent transparent transparent;
+}
+
+@keyframes toastProgress {
+  from { width: 100%; }
+  to { width: 0%; }
+}
+

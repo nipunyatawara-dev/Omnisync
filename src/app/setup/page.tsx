@@ -33,6 +33,67 @@ export default function SetupPage() {
   const [gitUsername, setGitUsername] = useState("");
   const [gitToken, setGitToken] = useState("");
 
+  // Settings & App Documentation Modal State
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<"global-settings" | "git-config" | "app-docs" | "tour-cache">("global-settings");
+
+  // Global Settings States
+  const [globalGitUsername, setGlobalGitUsername] = useState("");
+  const [globalGitEmail, setGlobalGitEmail] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("main");
+  const [autoFetchInterval, setAutoFetchInterval] = useState("5");
+  const [terminalShell, setTerminalShell] = useState("zsh");
+  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
+  const [enableTelemetry, setEnableTelemetry] = useState(true);
+  const [accentColor, setAccentColor] = useState("default");
+
+  // Load from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setGlobalGitUsername(localStorage.getItem("omnisync_global_git_username") || "");
+      setGlobalGitEmail(localStorage.getItem("omnisync_global_git_email") || "");
+      setDefaultBranch(localStorage.getItem("omnisync_global_default_branch") || "main");
+      setAutoFetchInterval(localStorage.getItem("omnisync_global_auto_fetch_interval") || "5");
+      setTerminalShell(localStorage.getItem("omnisync_global_terminal_shell") || "zsh");
+      setShowHiddenFiles(localStorage.getItem("omnisync_global_show_hidden") === "true");
+      setEnableTelemetry(localStorage.getItem("omnisync_global_telemetry") !== "false");
+      setAccentColor(localStorage.getItem("omnisync_global_accent") || "default");
+    }
+  }, []);
+
+  // Save settings handler
+  const handleSaveGlobalSettings = () => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("omnisync_global_git_username", globalGitUsername);
+      localStorage.setItem("omnisync_global_git_email", globalGitEmail);
+      localStorage.setItem("omnisync_global_default_branch", defaultBranch);
+      localStorage.setItem("omnisync_global_auto_fetch_interval", autoFetchInterval);
+      localStorage.setItem("omnisync_global_terminal_shell", terminalShell);
+      localStorage.setItem("omnisync_global_show_hidden", String(showHiddenFiles));
+      localStorage.setItem("omnisync_global_telemetry", String(enableTelemetry));
+      localStorage.setItem("omnisync_global_accent", accentColor);
+      alert("Global settings saved successfully!");
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "select", id: null }),
+      });
+    } catch {}
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("omnisync_git_token");
+      localStorage.removeItem("omnisync_git_username");
+    }
+    setGitToken("");
+    setGitUsername("");
+    setGithubUserDetail(null);
+    setStep("login");
+  };
+
   // Real OAuth & Simulated UI support State
   const [isOAuthModalOpen, setIsOAuthModalOpen] = useState(false);
   const [oauthState, setOauthState] = useState<"idle" | "authorizing" | "success">("idle");
@@ -520,8 +581,17 @@ export default function SetupPage() {
     // Check url query parameters for redirect OAuth fallback
     const params = new URLSearchParams(window.location.search);
     if (params.get("oauth_success") === "true") {
-      const token = params.get("token") || "";
-      const username = params.get("username") || "";
+      let token = "";
+      let username = "";
+      try {
+        token = sessionStorage.getItem("oauth_token") || "";
+        username = sessionStorage.getItem("oauth_username") || "";
+        sessionStorage.removeItem("oauth_token");
+        sessionStorage.removeItem("oauth_username");
+        sessionStorage.removeItem("oauth_avatar");
+      } catch (e) {
+        console.error("sessionStorage read error:", e);
+      }
       if (token && username) {
         Promise.resolve().then(() => {
           setGitUsername(username);
@@ -701,8 +771,73 @@ export default function SetupPage() {
       )}
 
       {/* Right Column: Dynamic Content Panel */}
-      <div className="w-full flex-1 p-xl bg-background flex flex-col items-center justify-center overflow-y-auto">
-        <div className={`w-full ${step === "profile-selection" || step === "repo-selection" ? "max-w-[640px]" : "max-w-[500px]"} animate-fade-slide`}>
+      <div className="w-full flex-1 bg-background flex flex-col overflow-hidden">
+        {/* Top Header Bar for profile-selection & repo-selection steps */}
+        {(step === "profile-selection" || step === "repo-selection") && (
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            padding: "16px 24px",
+            borderBottom: "1px solid var(--color-border-default)",
+            backgroundColor: "var(--color-bg-subtle)",
+            width: "100%",
+            zIndex: 10,
+            flexShrink: 0,
+          }}>
+            {/* Left brand or breadcrumb */}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <img src="/icon.png" alt="Logo" style={{ height: "20px", width: "20px", objectFit: "contain", borderRadius: "4px" }} />
+              <span style={{ fontSize: "14px", fontWeight: "600", color: "var(--color-fg-default)" }}>OmniSync Workspace Launcher</span>
+            </div>
+
+            {/* Top Right Profile Info, Settings, and Logout */}
+            <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+              {githubUserDetail && (
+                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginRight: "8px" }}>
+                  {githubUserDetail.avatarUrl ? (
+                    <img
+                      src={githubUserDetail.avatarUrl}
+                      alt={githubUserDetail.name}
+                      style={{ width: "28px", height: "28px", borderRadius: "50%", border: "1px solid var(--color-border-default)" }}
+                    />
+                  ) : (
+                    <div style={{ width: "28px", height: "28px", borderRadius: "50%", backgroundColor: "var(--color-bg-active)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                    </div>
+                  )}
+                  <div style={{ textAlign: "left", lineHeight: "1.2" }}>
+                    <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--color-fg-default)" }}>{githubUserDetail.name}</div>
+                    <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>@{githubUserDetail.login}</div>
+                  </div>
+                </div>
+              )}
+              
+              <button
+                className="btn btn-sm"
+                onClick={() => setIsSettingsOpen(true)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "4px",
+                }}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>settings</span>
+                Main Settings
+              </button>
+
+              <button
+                className="btn btn-sm btn-danger"
+                onClick={handleLogout}
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "40px 24px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", width: "100%" }}>
+          <div className={`w-full ${step === "profile-selection" || step === "repo-selection" ? "max-w-[640px]" : "max-w-[500px]"} animate-fade-slide`}>
           
           {/* STEP 1: GITHUB LOGIN */}
           {step === "login" && (
@@ -902,47 +1037,6 @@ export default function SetupPage() {
                 </p>
               </div>
 
-              {/* GitHub Connected Account Card */}
-              {githubUserDetail && (
-                <div className="flex items-center gap-md p-md bg-[#161b22] border border-outline-variant rounded-xl mb-lg animate-fade-in justify-between">
-                  <div className="flex items-center gap-md">
-                    {/* Avatar */}
-                    {githubUserDetail.avatarUrl ? (
-                      <img
-                        src={githubUserDetail.avatarUrl}
-                        alt={githubUserDetail.name}
-                        className="w-12 h-12 rounded-full border border-outline-variant shadow-sm"
-                      />
-                    ) : (
-                      <div className="w-12 h-12 rounded-full bg-accent-bg text-secondary-container flex items-center justify-center font-bold text-lg">
-                        🐱
-                      </div>
-                    )}
-                    <div>
-                      <div className="flex items-center gap-xs">
-                        <span className="font-button-text text-on-surface font-semibold text-[14px]">
-                          {githubUserDetail.name}
-                        </span>
-                        <span className="text-xs text-on-surface-variant font-mono">
-                          @{githubUserDetail.login}
-                        </span>
-                      </div>
-                      <p className="text-[12px] text-on-surface-variant leading-normal mt-[2px] truncate max-w-[320px] md:max-w-[420px]">
-                        {githubUserDetail.bio}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex flex-col items-end gap-[2px] shrink-0 text-right">
-                    <span className="badge badge-success text-[10px] font-semibold tracking-wide uppercase px-sm py-[2px] mb-xs">
-                      GitHub Linked
-                    </span>
-                    <span className="text-[11px] text-on-surface-variant font-medium">
-                      {githubUserDetail.publicRepos} public repos
-                    </span>
-                  </div>
-                </div>
-              )}
-
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-md mb-xl">
                 {profilesList.map((p) => (
                   <div
@@ -952,8 +1046,8 @@ export default function SetupPage() {
                   >
                     <div>
                       <div className="flex items-center gap-sm mb-sm">
-                        <div className="w-8 h-8 rounded-lg bg-accent-bg text-secondary-container flex items-center justify-center font-bold text-sm">
-                          📦
+                        <div className="w-8 h-8 rounded-lg bg-accent-bg text-secondary-container flex items-center justify-center">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                         </div>
                         <div className="min-w-0">
                           <div className="font-button-text text-on-surface truncate font-semibold">{p.name}</div>
@@ -986,29 +1080,6 @@ export default function SetupPage() {
                     Set up new repository
                   </div>
                 </div>
-              </div>
-
-              <div className="mt-md">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await fetch("/api/profiles", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ action: "select", id: null }),
-                    });
-                    if (typeof window !== "undefined") {
-                      localStorage.removeItem("omnisync_git_token");
-                      localStorage.removeItem("omnisync_git_username");
-                    }
-                    setGitToken("");
-                    setGitUsername("");
-                    setStep("login");
-                  }}
-                  className="btn-secondary rounded-lg py-sm px-md font-button-text text-button-text text-error hover:bg-error-container/10 border border-error/20 transition-colors cursor-pointer"
-                >
-                  Log Out
-                </button>
               </div>
             </div>
           )}
@@ -1389,8 +1460,388 @@ export default function SetupPage() {
             </div>
           )}
 
+          </div>
         </div>
       </div>
+
+      {/* Main Settings & Documentation Modal */}
+      {isSettingsOpen && (
+        <div style={{
+          position: "fixed",
+          inset: 0,
+          backgroundColor: "rgba(10, 12, 16, 0.85)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+          backdropFilter: "blur(4px)",
+        }}>
+          <div className="card animate-fade-slide" style={{
+            width: "90%",
+            maxWidth: "680px",
+            height: "80vh",
+            backgroundColor: "var(--color-bg-overlay)",
+            border: "1px solid var(--color-border-default)",
+            borderRadius: "12px",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            boxShadow: "0 20px 40px rgba(0, 0, 0, 0.6)",
+          }}>
+            {/* Modal Header */}
+            <div style={{
+              padding: "16px 20px",
+              borderBottom: "1px solid var(--color-border-default)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              backgroundColor: "var(--color-bg-subtle)",
+            }}>
+              <div>
+                <h3 style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#ffffff" }}>
+                  Main Settings &amp; Documentation
+                </h3>
+                <p style={{ fontSize: "11px", color: "var(--color-fg-muted)", margin: "2px 0 0 0" }}>
+                  Learn how to use OmniSync and configure preferences.
+                </p>
+              </div>
+              <button
+                className="btn btn-sm"
+                onClick={() => setIsSettingsOpen(false)}
+                style={{ minWidth: "32px", height: "32px", padding: 0, borderRadius: "50%", display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "center" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Navigation & Content Layout (Sidebar style) */}
+            <div style={{
+              display: "flex",
+              flex: 1,
+              overflow: "hidden",
+            }}>
+              {/* Left Sidebar */}
+              <div style={{
+                width: "180px",
+                borderRight: "1px solid var(--color-border-default)",
+                backgroundColor: "var(--color-bg-default)",
+                display: "flex",
+                flexDirection: "column",
+                padding: "12px",
+                gap: "6px",
+                flexShrink: 0,
+              }}>
+                {[
+                  { id: "global-settings", label: "Global Preferences" },
+                  { id: "git-config", label: "Git Configuration" },
+                  { id: "app-docs", label: "App Documentation" },
+                  { id: "tour-cache", label: "Reset Preferences" },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setSettingsTab(tab.id as any)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: "6px",
+                      background: settingsTab === tab.id ? "var(--color-bg-active)" : "none",
+                      border: "none",
+                      color: settingsTab === tab.id ? "var(--color-fg-default)" : "var(--color-fg-muted)",
+                      fontWeight: settingsTab === tab.id ? 600 : 500,
+                      fontSize: "12px",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      width: "100%",
+                      transition: "background 0.2s",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Right Content Area */}
+              <div style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "20px",
+                backgroundColor: "var(--color-bg-overlay)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "20px",
+              }}>
+                {settingsTab === "global-settings" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
+                      System Preferences
+                    </h3>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Active Terminal Shell
+                      </label>
+                      <select
+                        value={terminalShell}
+                        onChange={(e) => setTerminalShell(e.target.value)}
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      >
+                        <option value="zsh">zsh (macOS Default)</option>
+                        <option value="bash">bash</option>
+                        <option value="sh">sh</option>
+                      </select>
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Theme Accent Color
+                      </label>
+                      <select
+                        value={accentColor}
+                        onChange={(e) => setAccentColor(e.target.value)}
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      >
+                        <option value="default">Default Steel Blue</option>
+                        <option value="emerald">Emerald Green</option>
+                        <option value="royal">Royal Purple</option>
+                        <option value="sunset">Sunset Orange</option>
+                      </select>
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
+                      <div>
+                        <div style={{ fontSize: "12px", fontWeight: 600 }}>Show Hidden Files</div>
+                        <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>Toggle visibility of files starting with dots (e.g. .env, .gitignore)</div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={showHiddenFiles}
+                        onChange={(e) => setShowHiddenFiles(e.target.checked)}
+                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <div>
+                        <div style={{ fontSize: "12px", fontWeight: 600 }}>Anonymous Telemetry</div>
+                        <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>Share workspace diagnostics reports to help improve OmniSync</div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={enableTelemetry}
+                        onChange={(e) => setEnableTelemetry(e.target.checked)}
+                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      onClick={handleSaveGlobalSettings}
+                      style={{ marginTop: "12px", alignSelf: "flex-end" }}
+                    >
+                      Save Preferences
+                    </button>
+                  </div>
+                )}
+
+                {settingsTab === "git-config" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
+                      Global Git Configuration
+                    </h3>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Git Author Username
+                      </label>
+                      <input
+                        type="text"
+                        value={globalGitUsername}
+                        onChange={(e) => setGlobalGitUsername(e.target.value)}
+                        placeholder="e.g. John Doe"
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Git Author Email
+                      </label>
+                      <input
+                        type="email"
+                        value={globalGitEmail}
+                        onChange={(e) => setGlobalGitEmail(e.target.value)}
+                        placeholder="e.g. johndoe@example.com"
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Default Branch Name
+                      </label>
+                      <input
+                        type="text"
+                        value={defaultBranch}
+                        onChange={(e) => setDefaultBranch(e.target.value)}
+                        placeholder="e.g. main"
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      />
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
+                        Auto-Fetch Frequency
+                      </label>
+                      <select
+                        value={autoFetchInterval}
+                        onChange={(e) => setAutoFetchInterval(e.target.value)}
+                        className="form-control"
+                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
+                      >
+                        <option value="0">Never (Manual Sync)</option>
+                        <option value="1">Every 1 minute</option>
+                        <option value="5">Every 5 minutes</option>
+                        <option value="15">Every 15 minutes</option>
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      onClick={handleSaveGlobalSettings}
+                      style={{ marginTop: "12px", alignSelf: "flex-end" }}
+                    >
+                      Save Git Configuration
+                    </button>
+                  </div>
+                )}
+
+                {settingsTab === "app-docs" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
+                      OmniSync Developer Manual
+                    </h3>
+
+                    <div>
+                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
+                        Repository Setup &amp; Workspaces
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
+                        OmniSync enables you to map local repositories or clone from remote GitHub accounts. Once set up, the application scans the workspace directory for your package configurations, dev dependencies, and runtime script command details.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
+                        Live Diagnostics Engine
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
+                        Check node engine limitations and verify package compiler builds. The diagnostics engine runs automated diagnostic scans to detect missing packages or incompatible runtimes and provides safe recovery repairs.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
+                        Three-Pane Visual Merge Resolver
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
+                        When merge conflicts arise, OmniSync provides an interactive three-pane dashboard. It renders the Current Change (Ours) on the left, the Incoming Change (Theirs) on the right, and the Resulting Code in the center. Click block accept buttons to resolve segments quickly.
+                      </p>
+                    </div>
+
+                    <div>
+                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
+                        Git Branch Node Synchronization
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
+                        Toggle branch nodes on-the-fly and execute repository fetches. OmniSync calculates upstream diffs (commits ahead and behind) to help you keep local files perfectly synchronized with your remotes.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {settingsTab === "tour-cache" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
+                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
+                      Reset Onboarding &amp; Tour
+                    </h3>
+
+                    <div className="card" style={{ padding: "16px", backgroundColor: "rgba(22,27,34,0.4)", display: "flex", flexDirection: "column", gap: "12px", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
+                      <h4 style={{ fontSize: "13px", fontWeight: 700, margin: 0, color: "#ffffff" }}>
+                        Onboarding Preferences
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-muted)", margin: 0 }}>
+                        Reset guided onboarding tours and animations to play on the next workspace entry.
+                      </p>
+
+                      <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            localStorage.removeItem("omnisync_global_tour_shown");
+                            localStorage.removeItem("omnisync_tour_completed");
+                            alert("Guided tour has been reset! It will automatically start upon launching your next workspace.");
+                          }}
+                        >
+                          Reset Product Tour
+                        </button>
+
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => {
+                            sessionStorage.removeItem("omnisync_splash_shown");
+                            alert("First launch animation has been reset! It will play on your next app refresh.");
+                          }}
+                        >
+                          Reset Splash Screen
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="card" style={{ padding: "16px", backgroundColor: "rgba(22,27,34,0.4)", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
+                      <h4 style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px 0", color: "#ffffff" }}>
+                        Active Theme
+                      </h4>
+                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0 }}>
+                        System theme is set to <strong>GitHub Dark Mode (Default)</strong>. To change theme configuration, link a light mode workspace profile.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div style={{
+              padding: "12px 20px",
+              borderTop: "1px solid var(--color-border-default)",
+              display: "flex",
+              justifyContent: "flex-end",
+              backgroundColor: "var(--color-bg-subtle)",
+              flexShrink: 0,
+            }}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setIsSettingsOpen(false)}
+                style={{ width: "80px" }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       {/* GITHUB DEVICE FLOW MODAL */}
       {isOAuthModalOpen && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-lg animate-fade-in">

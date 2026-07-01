@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { execSync } from "child_process";
+import { execFile } from "child_process";
 import {
   getCurrentBranch,
   getBranches,
@@ -25,25 +25,25 @@ export async function GET(request: Request) {
 
   try {
     if (action === "all-commits") {
-      const commits = getAllRepoCommits(cwd);
+      const commits = await getAllRepoCommits(cwd);
       return NextResponse.json({ commits });
     }
 
     if (action === "branches") {
-      const branches = getBranches(cwd);
-      const current = getCurrentBranch(cwd);
+      const branches = await getBranches(cwd);
+      const current = await getCurrentBranch(cwd);
       return NextResponse.json({ branches, current });
     }
 
     if (action === "status") {
-      const sync = getSyncStatus(cwd);
+      const sync = await getSyncStatus(cwd);
       return NextResponse.json({ sync });
     }
 
     if (action === "commits") {
       const file = searchParams.get("file");
       if (!file) return NextResponse.json({ error: "File parameter missing" }, { status: 400 });
-      const commits = getFileCommits(cwd, file);
+      const commits = await getFileCommits(cwd, file);
       return NextResponse.json({ commits });
     }
 
@@ -53,20 +53,24 @@ export async function GET(request: Request) {
       if (!commit || !file) {
         return NextResponse.json({ error: "Commit or file parameter missing" }, { status: 400 });
       }
-      const diff = getCommitDiff(cwd, commit, file);
+      const diff = await getCommitDiff(cwd, commit, file);
       return NextResponse.json({ diff });
     }
 
     if (action === "conflicts") {
-      const conflicts = getConflictFiles(cwd);
+      const conflicts = await getConflictFiles(cwd);
       return NextResponse.json({ conflicts });
     }
 
     if (action === "conflict-details") {
       const file = searchParams.get("file");
       if (!file) return NextResponse.json({ error: "File parameter missing" }, { status: 400 });
-      const fullPath = path.join(cwd, file);
-      const details = parseConflictFile(fullPath);
+      const rootPath = path.resolve(cwd);
+      const fullPath = path.resolve(rootPath, file);
+      if (!fullPath.startsWith(rootPath + path.sep) && fullPath !== rootPath) {
+        return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
+      }
+      const details = await parseConflictFile(fullPath);
       return NextResponse.json(details);
     }
 
@@ -90,8 +94,20 @@ export async function POST(request: Request) {
 
     if (action === "switch-branch") {
       if (!branch) return NextResponse.json({ error: "Branch parameter missing" }, { status: 400 });
-      execSync(`git checkout ${branch}`, { cwd });
-      return NextResponse.json({ success: true, current: getCurrentBranch(cwd) });
+      
+      // Use execFile asynchronously to avoid event loop blocking and prevent command injection
+      await new Promise<void>((resolve, reject) => {
+        execFile("git", ["checkout", branch], { cwd }, (err) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve();
+          }
+        });
+      });
+      
+      const current = await getCurrentBranch(cwd);
+      return NextResponse.json({ success: true, current });
     }
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });

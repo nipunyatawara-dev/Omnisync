@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { execSync, spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -19,7 +19,11 @@ export async function GET() {
   const nodeVersion = process.version;
   let npmVersion = "unknown";
   try {
-    npmVersion = execSync("npm -v", { encoding: "utf-8" }).trim();
+    npmVersion = await new Promise<string>((resolve) => {
+      execFile(process.platform === "win32" ? "npm.cmd" : "npm", ["-v"], { encoding: "utf-8" }, (err, stdout) => {
+        resolve(err ? "unknown" : stdout.trim());
+      });
+    });
   } catch {}
 
   let enginesNode = "*";
@@ -70,8 +74,13 @@ export async function GET() {
   // Check git status
   let gitStatus = "Clean";
   try {
-    const gitOut = execSync("git status --porcelain", { cwd, stdio: ["pipe", "pipe", "ignore"], encoding: "utf-8" });
-    if (gitOut.trim()) {
+    const gitOut = await new Promise<string>((resolve, reject) => {
+      execFile("git", ["status", "--porcelain"], { cwd, encoding: "utf-8" }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout.trim());
+      });
+    });
+    if (gitOut) {
       gitStatus = "Modified changes present";
     }
   } catch {

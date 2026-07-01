@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ConflictBlock } from "@/lib/git";
+import Tooltip from "@/components/Tooltip";
 
 interface ConflictResolverProps {
   relativeFile: string;
@@ -190,9 +191,11 @@ export default function ConflictResolver({ relativeFile, onResolved }: ConflictR
             )}
           </div>
         </div>
-        <button className="btn btn-primary btn-sm" onClick={handleSaveResolution} style={{ padding: "6px 14px" }}>
-          Save Resolution
-        </button>
+        <Tooltip content="Apply and write conflict resolutions back to workspace file" position="left">
+          <button className="btn btn-primary btn-sm" onClick={handleSaveResolution} style={{ padding: "6px 14px" }}>
+            Save Resolution
+          </button>
+        </Tooltip>
       </div>
 
       {/* 3-Pane conflict layout */}
@@ -224,9 +227,11 @@ export default function ConflictResolver({ relativeFile, onResolved }: ConflictR
               <div key={block.id} style={{ marginBottom: "16px", border: "1px solid var(--color-border-default)", borderRadius: "6px", overflow: "hidden", background: "rgba(22, 27, 34, 0.4)" }}>
                 <div style={{ padding: "6px 10px", backgroundColor: "var(--color-bg-subtle)", fontSize: "11px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--color-border-default)" }}>
                   <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)" }}>Block {block.id}</span>
-                  <button className="btn btn-sm" style={{ padding: "2px 8px", fontSize: "10px" }} onClick={() => handleResolveBlock(block.id, "ours")}>
-                    Accept Ours
-                  </button>
+                  <Tooltip content="Choose current local code revision" position="bottom">
+                    <button className="btn btn-sm" style={{ padding: "2px 8px", fontSize: "10px" }} onClick={() => handleResolveBlock(block.id, "ours")}>
+                      Accept Ours
+                    </button>
+                  </Tooltip>
                 </div>
                 <pre style={{ margin: 0, padding: "12px", fontFamily: "var(--font-mono)", fontSize: "11px", whiteSpace: "pre-wrap", overflowX: "auto", color: "#e6edf3", lineHeight: "16px" }}>
                   {block.ours || <span style={{ color: "var(--color-fg-subtle)", fontStyle: "italic" }}>[Empty block]</span>}
@@ -302,9 +307,11 @@ export default function ConflictResolver({ relativeFile, onResolved }: ConflictR
               <div key={block.id} style={{ marginBottom: "16px", border: "1px solid var(--color-border-default)", borderRadius: "6px", overflow: "hidden", background: "rgba(22, 27, 34, 0.4)" }}>
                 <div style={{ padding: "6px 10px", backgroundColor: "var(--color-bg-subtle)", fontSize: "11px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--color-border-default)" }}>
                   <span style={{ fontWeight: 600, fontFamily: "var(--font-mono)" }}>Block {block.id}</span>
-                  <button className="btn btn-sm" style={{ padding: "2px 8px", fontSize: "10px" }} onClick={() => handleResolveBlock(block.id, "theirs")}>
-                    Accept Theirs
-                  </button>
+                  <Tooltip content="Choose incoming remote code revision" position="bottom">
+                    <button className="btn btn-sm" style={{ padding: "2px 8px", fontSize: "10px" }} onClick={() => handleResolveBlock(block.id, "theirs")}>
+                      Accept Theirs
+                    </button>
+                  </Tooltip>
                 </div>
                 <pre style={{ margin: 0, padding: "12px", fontFamily: "var(--font-mono)", fontSize: "11px", whiteSpace: "pre-wrap", overflowX: "auto", color: "#e6edf3", lineHeight: "16px" }}>
                   {block.theirs || <span style={{ color: "var(--color-fg-subtle)", fontStyle: "italic" }}>[Empty block]</span>}

@@ -174,16 +174,22 @@ function renderHtmlResponse(
         }, 1000);
       } else {
         // Direct redirect fallback
-        const url = new URL("/setup", window.location.origin);
         if (status.success) {
+          try {
+            sessionStorage.setItem("oauth_token", status.token);
+            sessionStorage.setItem("oauth_username", status.username);
+            sessionStorage.setItem("oauth_avatar", status.avatarUrl);
+          } catch (e) {
+            console.error("sessionStorage error:", e);
+          }
+          const url = new URL("/setup", window.location.origin);
           url.searchParams.set("oauth_success", "true");
-          url.searchParams.set("token", status.token);
-          url.searchParams.set("username", status.username);
-          url.searchParams.set("avatar", status.avatarUrl);
+          window.location.href = url.toString();
         } else {
+          const url = new URL("/setup", window.location.origin);
           url.searchParams.set("oauth_error", status.error);
+          window.location.href = url.toString();
         }
-        window.location.href = url.toString();
       }
     } catch (e) {
       console.error("Failed to post message back to main window", e);
