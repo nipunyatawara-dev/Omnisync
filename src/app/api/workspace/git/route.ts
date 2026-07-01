@@ -13,7 +13,10 @@ import {
   getAllRepoCommits,
   applyGitIdentity,
   gitFetch,
+  gitPull,
+  gitPush,
   isDirectCommitBlocked,
+  GitCommandError,
 } from "@/lib/git";
 import path from "path";
 
@@ -22,6 +25,20 @@ async function ensureWorkspaceGitConfig(cwd: string) {
   if (global.gitUsername || global.gitEmail) {
     await applyGitIdentity(cwd, global.gitUsername, global.gitEmail);
   }
+}
+
+function gitErrorResponse(err: unknown, fallback: string) {
+  if (err instanceof GitCommandError) {
+    return NextResponse.json({ error: err.message }, { status: 400 });
+  }
+  const msg = err instanceof Error ? err.message : fallback;
+  console.error(`[git] ${fallback}:`, err);
+  return NextResponse.json({ error: msg }, { status: 500 });
+}
+
+async function syncResponse(cwd: string, defaultBranch: string) {
+  const sync = await getSyncStatus(cwd, defaultBranch);
+  return { success: true, sync };
 }
 
 export async function GET(request: Request) {
@@ -97,8 +114,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
-    console.error("[git] GET failed:", err);
-    return NextResponse.json({ error: "Failed to read git data" }, { status: 500 });
+    return gitErrorResponse(err, "Failed to read git data");
   }
 }
 
@@ -110,15 +126,32 @@ export async function POST(request: Request) {
 
   const cwd = profile.workspacePath;
   const global = await getGlobalSettings();
+  const token = profile.gitToken;
 
   try {
     const body = await request.json();
     const { action, branch } = body;
 
     if (action === "fetch") {
-      await gitFetch(cwd);
-      const sync = await getSyncStatus(cwd, global.defaultBranch);
-      return NextResponse.json({ success: true, sync });
+      await gitFetch(cwd, token);
+      return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
+    }
+
+    if (action === "pull") {
+      await gitPull(cwd, token);
+      return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
+    }
+
+    if (action === "push") {
+      const current = await getCurrentBranch(cwd);
+      if (isDirectCommitBlocked(profile, current)) {
+        return NextResponse.json(
+          { error: "Push to main/master is disabled by branch protection." },
+          { status: 403 }
+        );
+      }
+      await gitPush(cwd, token);
+      return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
     if (action === "commit") {
@@ -143,9 +176,12 @@ export async function POST(request: Request) {
       }
 
       await new Promise<void>((resolve, reject) => {
-        execFile("git", ["checkout", branch], { cwd, timeout: 15000 }, (err) => {
-          if (err) reject(err);
-          else resolve();
+        execFile("git", ["checkout", branch], { cwd, timeout: 15000 }, (err, _stdout, stderr) => {
+          if (err) {
+            reject(new GitCommandError((stderr || err.message).trim()));
+          } else {
+            resolve();
+          }
         });
       });
 
@@ -159,8 +195,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : "Failed to perform git operation";
-    console.error("[git] POST failed:", err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return gitErrorResponse(err, "Failed to perform git operation");
   }
 }

@@ -363,6 +363,7 @@ export default function SetupPage() {
     publicRepos: number;
     login: string;
   } | null>(null);
+  const [isPatValidating, setIsPatValidating] = useState(false);
   const terminalEndRef = useRef<HTMLDivElement | null>(null);
 
   // Auto scroll terminal to bottom as logs append
@@ -671,15 +672,50 @@ export default function SetupPage() {
   }, []);
 
   // Handle GitHub Login (Manual PAT route)
-  const handleGitLogin = (e: React.FormEvent) => {
+  const handleGitLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!gitUsername) {
-      alert("Please enter a username");
+    const username = gitUsername.trim();
+    const token = gitToken.trim();
+
+    if (!username) {
+      alert("Please enter a GitHub username");
       return;
     }
-    if (gitToken) {
-      setGithubConnected(true);
+
+    if (token) {
+      setIsPatValidating(true);
+      try {
+        const res = await fetch("/api/github/validate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.valid) {
+          alert(data.error || "Invalid GitHub token. Check the token and try again.");
+          return;
+        }
+        setGitUsername(data.login || username);
+        setGithubConnected(true);
+        setGithubUserDetail({
+          avatarUrl: data.avatarUrl || "",
+          htmlUrl: "",
+          name: data.name || data.login || username,
+          bio: "Active developer profile",
+          publicRepos: 0,
+          login: data.login || username,
+        });
+      } catch {
+        alert("Failed to validate GitHub token. Check your connection and try again.");
+        return;
+      } finally {
+        setIsPatValidating(false);
+      }
+    } else {
+      setGithubConnected(false);
+      setGithubUserDetail(null);
     }
+
     setManualPath(process.cwd());
     setStep("profile-selection");
   };
@@ -694,9 +730,6 @@ export default function SetupPage() {
       });
       const data = await res.json();
       if (data.success) {
-        if (typeof window !== "undefined") {
-          sessionStorage.setItem("workspace_selected", "true");
-        }
         router.push("/");
       } else {
         alert(`Error selecting workspace: ${data.error}`);
@@ -769,9 +802,6 @@ export default function SetupPage() {
   };
 
   const handleLaunchManual = () => {
-    if (typeof window !== "undefined") {
-      sessionStorage.setItem("workspace_selected", "true");
-    }
     router.push("/");
   };
 
@@ -983,7 +1013,7 @@ export default function SetupPage() {
                           placeholder="ghp_xxxxxxxxxxxx"
                         />
                         <p className="font-body-md text-[12px] text-on-surface-variant mt-sm">
-                          Used to fetch your remote repositories (optional).
+                          Required for GitHub clone and sync features. Leave blank to continue in local-only mode.
                         </p>
                       </div>
                     </div>
@@ -998,9 +1028,14 @@ export default function SetupPage() {
                       </button>
                       <button
                         type="submit"
+                        disabled={isPatValidating}
                         className="w-2/3 btn-primary rounded-lg py-sm px-md font-button-text text-button-text transition-colors cursor-pointer"
                       >
-                        Authorize &amp; Sign In
+                        {isPatValidating
+                          ? "Validating..."
+                          : gitToken.trim()
+                            ? "Authorize & Sign In"
+                            : "Continue in Local Mode"}
                       </button>
                     </div>
                   </form>

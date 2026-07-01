@@ -6,17 +6,21 @@ import {
   getActiveProfileId,
   setActiveProfileId,
   deleteProfile,
+  type UserProfile,
 } from "@/lib/profiles";
+
+function sanitizeProfile(profile: UserProfile) {
+  const { password: _password, gitToken, ...rest } = profile;
+  return {
+    ...rest,
+    hasGitToken: !!gitToken,
+  };
+}
 
 export async function GET() {
   const profiles = await getProfiles();
   const activeProfileId = await getActiveProfileId();
-  // Never expose the local access password hash or the GitHub token to the client.
-  // Surface only a boolean flag indicating whether a token is stored.
-  const sanitized = profiles.map(({ password: _password, gitToken, ...rest }) => ({
-    ...rest,
-    hasGitToken: !!gitToken,
-  }));
+  const sanitized = profiles.map(sanitizeProfile);
   return NextResponse.json({ profiles: sanitized, activeProfileId });
 }
 
@@ -37,7 +41,7 @@ export async function POST(request: Request) {
         gitToken,
         password,
       });
-      return NextResponse.json({ success: true, profile: newProfile });
+      return NextResponse.json({ success: true, profile: sanitizeProfile(newProfile) });
     }
 
     if (action === "select") {
@@ -49,7 +53,7 @@ export async function POST(request: Request) {
     if (action === "update") {
       const { id, updates } = body;
       const updated = await updateProfile(id, updates);
-      return NextResponse.json({ success: true, profile: updated });
+      return NextResponse.json({ success: true, profile: sanitizeProfile(updated) });
     }
 
     if (action === "delete") {

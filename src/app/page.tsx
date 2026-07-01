@@ -92,6 +92,8 @@ export default function DashboardPage() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({ ahead: 0, behind: 0, upstream: "" });
   const [branchProtected, setBranchProtected] = useState(false);
   const [autoFetchIntervalMinutes, setAutoFetchIntervalMinutes] = useState(0);
+  const [isGitSyncing, setIsGitSyncing] = useState<"fetch" | "pull" | "push" | null>(null);
+  const [gitSyncError, setGitSyncError] = useState<string | null>(null);
   const [conflictFiles, setConflictFiles] = useState<string[]>([]);
   const [selectedConflictFile, setSelectedConflictFile] = useState<string | null>(null);
 
@@ -267,23 +269,39 @@ export default function DashboardPage() {
     try {
       const res = await fetch("/api/workspace/files");
       const data = await res.json();
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load workspace files", "error");
+        return;
+      }
       setFileTree((data.tree as FileNode[]) || []);
-    } catch {}
+    } catch {
+      showNotification("Failed to load workspace files", "error");
+    }
   };
 
   const loadGitBranches = async () => {
     try {
       const res = await fetch("/api/workspace/git?action=branches");
       const data = await res.json();
-      setBranches((data.branches as string[]) || ["main"]);
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load branches", "error");
+        return;
+      }
+      setBranches((data.branches as string[]) || []);
       setCurrentBranch(data.current || "main");
-    } catch {}
+    } catch {
+      showNotification("Failed to load branches", "error");
+    }
   };
 
   const loadGitSyncStatus = async () => {
     try {
       const res = await fetch("/api/workspace/git?action=status");
       const data = await res.json();
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load sync status", "error");
+        return;
+      }
       setSyncStatus((data.sync as SyncStatus) || { ahead: 0, behind: 0, upstream: "" });
       if (typeof data.branchProtected === "boolean") {
         setBranchProtected(data.branchProtected);
@@ -291,7 +309,9 @@ export default function DashboardPage() {
       if (typeof data.autoFetchIntervalMinutes === "number") {
         setAutoFetchIntervalMinutes(data.autoFetchIntervalMinutes);
       }
-    } catch {}
+    } catch {
+      showNotification("Failed to load sync status", "error");
+    }
   };
 
   const loadConflictFiles = async () => {
@@ -330,12 +350,6 @@ export default function DashboardPage() {
   // 1. Fetch Profile details first
   useEffect(() => {
     async function loadProfile() {
-      // Force redirect to setup if no workspace selected this session
-      if (typeof window !== "undefined" && !sessionStorage.getItem("workspace_selected")) {
-        router.push("/setup");
-        return;
-      }
-
       try {
         const res = await fetch("/api/profiles");
         const data = await res.json();
@@ -677,14 +691,48 @@ export default function DashboardPage() {
         }
         loadWorkspaceFiles();
         setActiveFile(null);
+        showNotification(`Switched to branch ${data.current}`, "success", 2500);
       } else {
-        alert(`Failed to switch branch: ${data.error}`);
+        showNotification(data.error || "Failed to switch branch", "error");
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      alert(`Error switching branch: ${msg}`);
+      showNotification(`Error switching branch: ${msg}`, "error");
     } finally {
       setIsChangingBranch(false);
+    }
+  };
+
+  const handleGitSync = async (action: "fetch" | "pull" | "push") => {
+    setIsGitSyncing(action);
+    setGitSyncError(null);
+    try {
+      const res = await fetch("/api/workspace/git", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const message = data.error || `Git ${action} failed`;
+        setGitSyncError(message);
+        showNotification(message, "error");
+        return;
+      }
+      if (data.sync) {
+        setSyncStatus(data.sync as SyncStatus);
+      } else {
+        await loadGitSyncStatus();
+      }
+      await loadConflictFiles();
+      await loadAllCommits();
+      showNotification(`Git ${action} completed successfully`, "success", 2500);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setGitSyncError(msg);
+      showNotification(msg, "error");
+    } finally {
+      setIsGitSyncing(null);
     }
   };
 
@@ -1436,6 +1484,46 @@ export default function DashboardPage() {
                         </span>
                       </div>
                     </div>
+
+                    <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                      {(["fetch", "pull", "push"] as const).map((action) => (
+                        <button
+                          key={action}
+                          type="button"
+                          className="btn btn-sm"
+                          disabled={!!isGitSyncing || (action === "push" && branchProtected)}
+                          onClick={() => handleGitSync(action)}
+                          style={{
+                            flex: 1,
+                            textTransform: "capitalize",
+                            fontSize: "11px",
+                            fontWeight: 600,
+                            opacity: action === "push" && branchProtected ? 0.5 : 1,
+                          }}
+                          title={
+                            action === "push" && branchProtected
+                              ? "Push to main/master is disabled by branch protection"
+                              : undefined
+                          }
+                        >
+                          {isGitSyncing === action ? "..." : action}
+                        </button>
+                      ))}
+                    </div>
+
+                    {gitSyncError && (
+                      <div style={{
+                        fontSize: "11px",
+                        color: "var(--color-danger-fg)",
+                        backgroundColor: "var(--color-danger-bg)",
+                        border: "1px solid var(--color-danger-border)",
+                        borderRadius: "4px",
+                        padding: "6px 8px",
+                        lineHeight: "1.4",
+                      }}>
+                        {gitSyncError}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2376,10 +2464,23 @@ export default function DashboardPage() {
             <WorkspaceSettingsView
               activeProfile={activeProfile}
               onProfileUpdated={(updatedProfile) => {
+                const commandChanged =
+                  updatedProfile.runCommand !== activeProfile?.runCommand ||
+                  updatedProfile.port !== activeProfile?.port;
                 setActiveProfile(updatedProfile);
                 loadWorkspaceFiles();
                 loadGitBranches();
                 loadGitSyncStatus();
+                if (
+                  commandChanged &&
+                  (runnerStatus?.status === "running" || runnerStatus?.status === "starting")
+                ) {
+                  showNotification(
+                    "Run command or port changed — stop and restart the dev server to apply.",
+                    "info",
+                    6000
+                  );
+                }
               }}
             />
           )}

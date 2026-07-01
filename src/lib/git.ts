@@ -26,15 +26,33 @@ export interface DiffLine {
   lineNumber?: number;
 }
 
-function execGit(args: string[], cwd: string): Promise<void> {
+export class GitCommandError extends Error {
+  stderr: string;
+
+  constructor(message: string, stderr = "") {
+    super(message);
+    this.name = "GitCommandError";
+    this.stderr = stderr;
+  }
+}
+
+function execGit(args: string[], cwd: string, token?: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const gitArgs = token
+      ? ["-c", `http.extraHeader=Authorization: Bearer ${token}`, ...args]
+      : args;
+
     execFile(
       "git",
-      args,
-      { cwd, encoding: "utf-8", timeout: 20000 },
-      (error) => {
-        if (error) reject(error);
-        else resolve();
+      gitArgs,
+      { cwd, encoding: "utf-8", timeout: 120000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();
+          reject(new GitCommandError(msg, stderr?.trim() || ""));
+          return;
+        }
+        resolve();
       }
     );
   });
@@ -54,24 +72,35 @@ export async function applyGitIdentity(
   }
 }
 
-export async function gitFetch(cwd: string): Promise<void> {
-  await execGit(["fetch", "--all", "--prune"], cwd);
+export async function gitFetch(cwd: string, token?: string): Promise<void> {
+  await execGit(["fetch", "--all", "--prune"], cwd, token);
 }
 
-// Helper to run commands asynchronously with parameter arrays
+export async function gitPull(cwd: string, token?: string): Promise<void> {
+  const branch = await getCurrentBranch(cwd);
+  await execGit(["pull", "--ff-only", "origin", branch], cwd, token);
+}
+
+export async function gitPush(cwd: string, token?: string): Promise<void> {
+  const branch = await getCurrentBranch(cwd);
+  await execGit(["push", "origin", branch], cwd, token);
+}
+
+// Helper to run read-only git commands; rejects on failure
 function runGit(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     execFile(
       "git",
       args,
       { cwd, encoding: "utf-8", timeout: 20000, maxBuffer: 32 * 1024 * 1024 },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
         if (error) {
-          console.error(`[git] command failed: git ${args[0]}`, error.message);
-          resolve("");
-        } else {
-          resolve(stdout.trim());
+          const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();
+          console.error(`[git] command failed: git ${args[0]}`, msg);
+          reject(new GitCommandError(msg, stderr?.trim() || ""));
+          return;
         }
+        resolve((stdout || "").trim());
       }
     );
   });
@@ -79,15 +108,24 @@ function runGit(args: string[], cwd: string): Promise<string> {
 
 // Get current active branch
 export async function getCurrentBranch(cwd: string): Promise<string> {
-  const branch = await runGit(["branch", "--show-current"], cwd);
-  return branch || "main";
+  try {
+    const branch = await runGit(["branch", "--show-current"], cwd);
+    if (branch) return branch;
+  } catch {
+    // fall through for detached HEAD
+  }
+  try {
+    return await runGit(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  } catch {
+    throw new GitCommandError("Unable to determine the current branch");
+  }
 }
 
 // List all local branches
 export async function getBranches(cwd: string): Promise<string[]> {
   const output = await runGit(["branch", "--format=%(refname:short)"], cwd);
-  if (!output) return ["main"];
-  return output.split("\n").map(b => b.trim()).filter(Boolean);
+  if (!output) return [];
+  return output.split("\n").map((b) => b.trim()).filter(Boolean);
 }
 
 // Get synchronization status relative to upstream
