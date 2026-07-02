@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOauthConfig } from "@/lib/profiles";
-
-const DEFAULT_CLIENT_ID = "Ov23li8zIwN0BXPmjmA4"; // Default public Client ID for OmniSync Device Flow
+import { requireGithubClientId } from "@/lib/githubOAuth";
 
 export async function POST(request: Request) {
   try {
@@ -10,8 +8,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Missing deviceCode" }, { status: 400 });
     }
 
-    const config = await getOauthConfig();
-    const clientId = config.githubClientId || process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || DEFAULT_CLIENT_ID;
+    const clientId = await requireGithubClientId();
 
     const res = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST",
@@ -38,7 +35,6 @@ export async function POST(request: Request) {
 
     const accessToken = data.access_token;
 
-    // Fetch user profile
     const userRes = await fetch("https://api.github.com/user", {
       headers: {
         Authorization: `Bearer ${accessToken}`,

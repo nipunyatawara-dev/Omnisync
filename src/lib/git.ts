@@ -1,16 +1,22 @@
 import { execFile } from "child_process";
 import { promises as fs } from "fs";
+import path from "path";
 import type { UserProfile } from "@/lib/profiles";
 
-const PROTECTED_BRANCHES = new Set(["main", "master"]);
+const DEFAULT_PROTECTED_BRANCHES = new Set(["main", "master"]);
 
-export function isProtectedBranch(branch: string): boolean {
-  return PROTECTED_BRANCHES.has(branch.toLowerCase());
+export function isProtectedBranch(
+  branch: string,
+  extraProtected: string[] = []
+): boolean {
+  const normalized = branch.toLowerCase();
+  if (DEFAULT_PROTECTED_BRANCHES.has(normalized)) return true;
+  return extraProtected.some((b) => b.toLowerCase() === normalized);
 }
 
 export function isDirectCommitBlocked(profile: UserProfile | null, branch: string): boolean {
   if (!profile?.branchProtection) return false;
-  return isProtectedBranch(branch);
+  return isProtectedBranch(branch, profile.protectedBranches ?? []);
 }
 
 export interface GitCommit {
@@ -38,8 +44,16 @@ export class GitCommandError extends Error {
 
 function execGit(args: string[], cwd: string, token?: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    // Disable OS credential helpers so stale keychain entries cannot override
+    // the profile OAuth token passed via Authorization header.
     const gitArgs = token
-      ? ["-c", `http.extraHeader=Authorization: Bearer ${token}`, ...args]
+      ? [
+          "-c",
+          "credential.helper=",
+          "-c",
+          `http.extraHeader=Authorization: Bearer ${token}`,
+          ...args,
+        ]
       : args;
 
     execFile(
@@ -76,9 +90,133 @@ export async function gitFetch(cwd: string, token?: string): Promise<void> {
   await execGit(["fetch", "--all", "--prune"], cwd, token);
 }
 
+export class GitPullNotFastForwardError extends GitCommandError {
+  constructor(message: string, stderr = "") {
+    super(message, stderr);
+    this.name = "GitPullNotFastForwardError";
+  }
+}
+
 export async function gitPull(cwd: string, token?: string): Promise<void> {
   const branch = await getCurrentBranch(cwd);
-  await execGit(["pull", "--ff-only", "origin", branch], cwd, token);
+  try {
+    await execGit(["pull", "--ff-only", "origin", branch], cwd, token);
+  } catch (err) {
+    if (err instanceof GitCommandError) {
+      const lower = err.message.toLowerCase();
+      if (
+        lower.includes("not possible to fast-forward") ||
+        lower.includes("diverging branches") ||
+        lower.includes("non-fast-forward")
+      ) {
+        throw new GitPullNotFastForwardError(err.message, err.stderr);
+      }
+    }
+    throw err;
+  }
+}
+
+export async function gitPullMerge(cwd: string, token?: string): Promise<void> {
+  const branch = await getCurrentBranch(cwd);
+  await execGit(["pull", "--no-rebase", "origin", branch], cwd, token);
+}
+
+export async function gitPullRebase(cwd: string, token?: string): Promise<void> {
+  const branch = await getCurrentBranch(cwd);
+  await execGit(["pull", "--rebase", "origin", branch], cwd, token);
+}
+
+export type GitFileStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "ignored"
+  | "conflicted";
+
+export interface GitWorkingFile {
+  path: string;
+  status: GitFileStatus;
+  staged: boolean;
+}
+
+export async function gitWorkingStatus(cwd: string): Promise<GitWorkingFile[]> {
+  const output = await runGit(["status", "--porcelain=v1", "-uall"], cwd);
+  if (!output) return [];
+
+  const files: GitWorkingFile[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const indexStatus = line[0];
+    const workTreeStatus = line[1];
+    const filePath = line.slice(3).trim();
+    const staged = indexStatus !== " " && indexStatus !== "?";
+    const code = staged ? indexStatus : workTreeStatus;
+
+    let status: GitFileStatus = "modified";
+    if (code === "?" || code === "!") status = code === "?" ? "untracked" : "ignored";
+    else if (code === "A") status = "added";
+    else if (code === "D") status = "deleted";
+    else if (code === "R") status = "renamed";
+    else if (code === "C") status = "copied";
+    else if (code === "U" || indexStatus === "U" || workTreeStatus === "U") status = "conflicted";
+
+    files.push({ path: filePath, status, staged });
+  }
+  return files;
+}
+
+export async function gitStage(cwd: string, files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  await execGit(["add", "--", ...files], cwd);
+}
+
+export async function gitUnstage(cwd: string, files: string[]): Promise<void> {
+  if (files.length === 0) return;
+  await execGit(["reset", "HEAD", "--", ...files], cwd);
+}
+
+export async function gitStageFile(cwd: string, file: string): Promise<void> {
+  await execGit(["add", "--", file], cwd);
+}
+
+export async function gitCommit(
+  cwd: string,
+  message: string,
+  amend = false
+): Promise<void> {
+  const args = amend ? ["commit", "--amend", "-m", message] : ["commit", "-m", message];
+  await execGit(args, cwd);
+}
+
+export type MergeState = "none" | "merge" | "rebase";
+
+export async function getMergeState(cwd: string): Promise<MergeState> {
+  try {
+    await fs.access(path.join(cwd, ".git", "MERGE_HEAD"));
+    return "merge";
+  } catch {
+    // continue
+  }
+  for (const marker of ["rebase-merge", "rebase-apply"]) {
+    try {
+      await fs.access(path.join(cwd, ".git", marker));
+      return "rebase";
+    } catch {
+      // continue
+    }
+  }
+  return "none";
+}
+
+export async function gitMergeContinue(cwd: string): Promise<void> {
+  await execGit(["merge", "--continue"], cwd);
+}
+
+export async function gitRebaseContinue(cwd: string): Promise<void> {
+  await execGit(["rebase", "--continue"], cwd);
 }
 
 export async function gitPush(cwd: string, token?: string): Promise<void> {

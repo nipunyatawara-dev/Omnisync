@@ -70,7 +70,7 @@ The main dashboard (`/`) is organized around a sidebar with five views:
 **Workspace view** highlights:
 
 * Browse and open files from a live-scanned project tree
-* Tabbed editor with Markdown rendering for `.md` files
+* File viewer with Markdown rendering for `.md` files
 * Resizable panels — drag dividers to fit your layout
 * Commit timeline and per-file diff analysis in the right column
 
@@ -133,6 +133,43 @@ npm start
 
 Profile data, encrypted secrets, and workspace configuration are stored under `User data/` in the project root.
 
+### Package for distribution
+
+```bash
+npm run build
+npm run electron:pack    # unpacked app in dist/
+npm run electron:build   # platform installers (.dmg, .exe, .AppImage)
+```
+
+### Tests
+
+```bash
+npm test
+```
+
+# Architecture
+
+OmniSync is a three-layer desktop app:
+
+```
+Electron shell (main.js)
+    └── spawns Next.js on localhost:3000
+            └── React dashboard (src/app/)
+                    └── API routes (src/app/api/)
+                            └── lib helpers (src/lib/)
+                                    └── filesystem + git + child processes
+```
+
+| Layer | Key files | Responsibility |
+| --- | --- | --- |
+| **Shell** | `main.js`, `preload.js` | Window, API token cookie, encryption secret, directory picker IPC |
+| **UI** | `src/app/page.tsx`, `src/components/views/` | Dashboard tabs: workspace, git sync, diagnostics, timeline, settings |
+| **API** | `src/app/api/workspace/*`, `src/middleware.ts` | Auth-guarded routes for git, files, runner, launch, diagnostics |
+| **Core** | `src/lib/git.ts`, `profiles.ts`, `pathSafety.ts`, `platformLaunch.ts` | Git ops, encrypted profiles, safe paths, cross-platform IDE launch |
+
+**Security model:** Electron generates a per-session API token and encryption secret. Middleware requires a matching HttpOnly cookie on `/api/*` from localhost only. Profile tokens are encrypted at rest with AES-256-GCM.
+
+**Data flow (git sync):** UI → `POST /api/workspace/git` → `src/lib/git.ts` → system `git` binary → JSON response → dashboard state via `useGitSync` hook.
 
 # Contributing
 

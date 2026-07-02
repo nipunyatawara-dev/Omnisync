@@ -4,6 +4,7 @@ import { execFile, spawn } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
+import { resetBrokenEsbuildInstall, npmInstallArgs } from "@/lib/npmInstall";
 
 const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
@@ -143,7 +144,7 @@ export async function POST(request: Request) {
   const cwd = profile.workspacePath;
 
   try {
-    const { action } = await request.json();
+    const { action, cleanModules } = await request.json();
     const encoder = new TextEncoder();
 
     const cmd = npmCmd;
@@ -156,11 +157,11 @@ export async function POST(request: Request) {
       try {
         await fs.rm(nodeModulesPath, { recursive: true, force: true });
       } catch {}
-      args = ["install"];
+      args = npmInstallArgs(["install"]);
     } else if (action === "audit-fix") {
       args = ["audit", "fix", "--force"];
     } else if (action === "install") {
-      args = ["install"];
+      args = npmInstallArgs(["install"]);
     } else {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
@@ -184,6 +185,29 @@ export async function POST(request: Request) {
 
         sendLog(`> Running maintenance command inside ${cwd}:`);
         sendLog(`> ${cmd} ${args.join(" ")}`);
+
+        if (action === "install" || action === "clean-modules") {
+          if (action === "install" && cleanModules === true) {
+            const nodeModulesPath = path.join(cwd, "node_modules");
+            try {
+              await fs.rm(nodeModulesPath, { recursive: true, force: true });
+              sendLog("> Removed node_modules for a clean install.");
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              sendLog(`> Warning: could not remove node_modules: ${msg}`);
+            }
+          }
+
+          try {
+            const resetMessage = await resetBrokenEsbuildInstall(cwd);
+            if (resetMessage) {
+              sendLog(`> ${resetMessage}`);
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            sendLog(`> Warning: could not reset esbuild: ${msg}`);
+          }
+        }
 
         const child = spawn(cmd, args, { cwd, shell: isWin });
 

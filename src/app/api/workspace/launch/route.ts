@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import { getRunnerLogs } from "@/lib/runner";
-
-const isWin = process.platform === "win32";
+import {
+  launchIde,
+  openUrl,
+  openXcodeProject,
+  runElectronDev,
+  type IdeSlug,
+} from "@/lib/platformLaunch";
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -16,7 +20,6 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-// GET: Scan workspace directory and return available launch targets
 export async function GET() {
   const profile = await getActiveProfile();
   if (!profile || !profile.workspacePath) {
@@ -29,9 +32,15 @@ export async function GET() {
   try {
     if (await pathExists(cwd)) {
       const files = await fs.readdir(cwd);
-      const hasXcode = files.some(
-        (f) => f.endsWith(".xcworkspace") || f.endsWith(".xcodeproj") || f === "ios" || f === "macos"
-      );
+      const hasXcode =
+        process.platform === "darwin" &&
+        files.some(
+          (f) =>
+            f.endsWith(".xcworkspace") ||
+            f.endsWith(".xcodeproj") ||
+            f === "ios" ||
+            f === "macos"
+        );
       if (hasXcode) {
         launchOptions.push("xcode");
       }
@@ -48,13 +57,11 @@ export async function GET() {
           }
         } catch {}
 
-        // Always assume browser is an option if package.json exists (meaning web project)
         launchOptions.push("browser");
       }
     }
   } catch {}
 
-  // Fallback default: browser
   if (launchOptions.length === 0) {
     launchOptions.push("browser");
   }
@@ -62,7 +69,6 @@ export async function GET() {
   return NextResponse.json({ launchOptions });
 }
 
-// POST: Execute launch action
 export async function POST(request: Request) {
   const profile = await getActiveProfile();
   if (!profile || !profile.workspacePath) {
@@ -75,24 +81,11 @@ export async function POST(request: Request) {
     const { type, port, ide } = await request.json();
 
     if (type === "ide") {
-      let appName = "";
-      if (ide === "vscode") appName = "Visual Studio Code";
-      else if (ide === "zed") appName = "Zed";
-      else if (ide === "intellij") appName = "IntelliJ IDEA";
-      else if (ide === "webstorm") appName = "WebStorm";
-      else if (ide === "xcode") appName = "Xcode";
-      else if (ide === "antigravity") appName = "Antigravity";
-      else if (ide === "codex") appName = "Codex";
-
-      if (appName) {
-        execFile("open", ["-a", appName, cwd], { timeout: 15000 }, (err) => {
-          if (err) {
-            console.error(`Failed to launch ${appName}:`, err);
-          }
-        });
-        return NextResponse.json({ success: true, launched: appName });
+      if (!ide || typeof ide !== "string") {
+        return NextResponse.json({ error: "IDE parameter missing" }, { status: 400 });
       }
-      return NextResponse.json({ error: "Unsupported IDE target" }, { status: 400 });
+      const launched = await launchIde(ide as IdeSlug, cwd);
+      return NextResponse.json({ success: true, launched });
     }
 
     if (type === "browser") {
@@ -100,7 +93,7 @@ export async function POST(request: Request) {
       const urlRegex = /http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d+)/i;
       const defaultPort = profile.port && profile.port > 0 ? profile.port : 3000;
       let url = `http://localhost:${port || defaultPort}`;
-      
+
       for (let i = logs.length - 1; i >= 0; i--) {
         const match = logs[i].match(urlRegex);
         if (match) {
@@ -109,9 +102,7 @@ export async function POST(request: Request) {
         }
       }
 
-      execFile("open", [url], { timeout: 15000 }, (err) => {
-        if (err) console.error("Failed to open URL:", err);
-      });
+      await openUrl(url);
       return NextResponse.json({ success: true, url });
     }
 
@@ -122,13 +113,14 @@ export async function POST(request: Request) {
         targetFile = files.find((f) => f.endsWith(".xcodeproj"));
       }
 
-      // Check subdirectories like ios/ or macos/ if none found in root
       if (!targetFile) {
         for (const sub of ["ios", "macos"]) {
           const subPath = path.join(cwd, sub);
           if (await pathExists(subPath)) {
             const subFiles = await fs.readdir(subPath);
-            const match = subFiles.find((f) => f.endsWith(".xcworkspace") || f.endsWith(".xcodeproj"));
+            const match = subFiles.find(
+              (f) => f.endsWith(".xcworkspace") || f.endsWith(".xcodeproj")
+            );
             if (match) {
               targetFile = `${sub}/${match}`;
               break;
@@ -138,26 +130,25 @@ export async function POST(request: Request) {
       }
 
       if (!targetFile) {
-        return NextResponse.json({ error: "No Xcode workspace or project file found." }, { status: 400 });
+        return NextResponse.json(
+          { error: "No Xcode workspace or project file found." },
+          { status: 400 }
+        );
       }
 
-      execFile("open", [path.join(cwd, targetFile)], { timeout: 15000 }, (err) => {
-        if (err) console.error("Failed to open Xcode project/workspace:", err);
-      });
+      await openXcodeProject(cwd, targetFile);
       return NextResponse.json({ success: true });
     }
 
     if (type === "electron") {
-      const npmCmd = isWin ? "npm.cmd" : "npm";
-      execFile(npmCmd, ["run", "electron"], { cwd }, (err) => {
-        if (err) console.error("Failed to run Electron process:", err);
-      });
+      runElectronDev(cwd);
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: "Invalid launch type" }, { status: 400 });
   } catch (err: unknown) {
     console.error("[launch] failed:", err);
-    return NextResponse.json({ error: "Launch failed" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : "Launch failed";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

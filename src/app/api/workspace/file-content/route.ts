@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
-import path from "path";
 import { getActiveProfile } from "@/lib/profiles";
+import { resolveSafePath, PathAccessError } from "@/lib/pathSafety";
 
 export async function GET(request: Request) {
   const profile = await getActiveProfile();
@@ -16,24 +16,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const rootPath = path.resolve(profile.workspacePath);
-    const absolutePath = path.resolve(rootPath, relativeFile);
-
-    // Check for path traversal
-    if (!absolutePath.startsWith(rootPath + path.sep) && absolutePath !== rootPath) {
-      return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
-    }
-
-    // Resolve symlinks and re-verify containment to prevent symlink escape.
-    const realRoot = await fs.realpath(rootPath);
-    const realPath = await fs.realpath(absolutePath);
-    if (!realPath.startsWith(realRoot + path.sep) && realPath !== realRoot) {
-      return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
-    }
-
+    const realPath = await resolveSafePath(profile.workspacePath, relativeFile);
     const content = await fs.readFile(realPath, "utf-8");
     return NextResponse.json({ content });
   } catch (err: unknown) {
+    if (err instanceof PathAccessError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
     console.error("[file-content] read failed:", err);
     return NextResponse.json({ error: "Failed to read file" }, { status: 500 });
   }
@@ -51,17 +40,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "File parameter missing" }, { status: 400 });
     }
 
-    const rootPath = path.resolve(profile.workspacePath);
-    const absolutePath = path.resolve(rootPath, file);
-
-    // Check for path traversal
-    if (!absolutePath.startsWith(rootPath + path.sep) && absolutePath !== rootPath) {
-      return NextResponse.json({ error: "Access denied: Invalid file path" }, { status: 403 });
-    }
-
-    await fs.writeFile(absolutePath, content, "utf-8");
+    const realPath = await resolveSafePath(profile.workspacePath, file);
+    await fs.writeFile(realPath, content, "utf-8");
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
+    if (err instanceof PathAccessError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
     console.error("[file-content] write failed:", err);
     return NextResponse.json({ error: "Failed to write file" }, { status: 500 });
   }

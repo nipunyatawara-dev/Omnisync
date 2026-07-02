@@ -8,7 +8,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "electron": "electron ."
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "electron": "electron .",
+    "electron:build": "next build && electron-builder --config electron-builder.json",
+    "electron:pack": "next build && electron-builder --dir --config electron-builder.json"
   },
   "dependencies": {
     "next": "16.2.9",
@@ -21,9 +25,11 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "electron": "^42.5.1",
+    "electron-builder": "^26.0.12",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

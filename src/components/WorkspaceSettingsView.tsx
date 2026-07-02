@@ -15,6 +15,9 @@ export default function WorkspaceSettingsView({ activeProfile, onProfileUpdated 
 
   // Repository-specific settings
   const [branchProtection, setBranchProtection] = useState<boolean>(activeProfile?.branchProtection ?? true);
+  const [protectedBranchesText, setProtectedBranchesText] = useState<string>(
+    (activeProfile?.protectedBranches ?? []).join(", ")
+  );
   const [autoFetch, setAutoFetch] = useState<boolean>(activeProfile?.autoFetch ?? true);
   const [devPort, setDevPort] = useState<number>(activeProfile?.port ?? 3000);
   const [runCommand, setRunCommand] = useState<string>(activeProfile?.runCommand ?? "npm run dev");
@@ -28,6 +31,7 @@ export default function WorkspaceSettingsView({ activeProfile, onProfileUpdated 
     if (!activeProfile) return;
     setWorkspacePath(activeProfile.workspacePath || "");
     setBranchProtection(activeProfile.branchProtection ?? true);
+    setProtectedBranchesText((activeProfile.protectedBranches ?? []).join(", "));
     setAutoFetch(activeProfile.autoFetch ?? true);
     setDevPort(activeProfile.port ?? 3000);
     setRunCommand(activeProfile.runCommand ?? "npm run dev");
@@ -52,6 +56,10 @@ export default function WorkspaceSettingsView({ activeProfile, onProfileUpdated 
             workspacePath,
             workspaceType,
             branchProtection,
+            protectedBranches: protectedBranchesText
+              .split(",")
+              .map((b) => b.trim())
+              .filter(Boolean),
             autoFetch,
             port: devPort,
             runCommand,
@@ -187,8 +195,23 @@ export default function WorkspaceSettingsView({ activeProfile, onProfileUpdated 
                 onChange={(e) => setBranchProtection(e.target.checked)}
                 style={{ width: "16px", height: "16px" }}
               />
-              <span>Prevent direct commits to <strong>main</strong> / <strong>master</strong> branches</span>
+              <span>Prevent direct commits to protected branches (includes <strong>main</strong> / <strong>master</strong>)</span>
             </label>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: "1 1 100%" }}>
+              <label style={{ fontSize: "12px", fontWeight: 600 }}>Additional protected branches</label>
+              <input
+                type="text"
+                className="form-control"
+                value={protectedBranchesText}
+                onChange={(e) => setProtectedBranchesText(e.target.value)}
+                placeholder="e.g. production, release"
+                style={{ fontFamily: "var(--font-mono)", fontSize: "12px" }}
+              />
+              <span style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>
+                Comma-separated branch names. Commits and pushes to these branches are blocked when protection is enabled.
+              </span>
+            </div>
 
             <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
               <input

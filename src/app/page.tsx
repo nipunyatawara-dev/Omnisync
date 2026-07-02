@@ -5,18 +5,17 @@ import { useRouter as useAppRouter } from "next/navigation";
 import FileTree, { FileNode } from "@/components/FileTree";
 import CodeViewer from "@/components/CodeViewer";
 import DiffViewer from "@/components/DiffViewer";
-import ConflictResolver from "@/components/ConflictResolver";
+import GitSyncView from "@/components/views/GitSyncView";
+import DependencyInstallModal, {
+  type DependencyInstallModalState,
+} from "@/components/DependencyInstallModal";
+import Loader from "@/components/Loader";
 import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
 import { UserProfile } from "@/lib/profiles";
+import { useGitSync } from "@/hooks/useGitSync";
 import Tooltip from "@/components/Tooltip";
 import ProductTour from "@/components/ProductTour";
 import { RunnerStatus } from "@/lib/runner";
-
-interface SyncStatus {
-  ahead: number;
-  behind: number;
-  upstream: string;
-}
 
 interface RepoCommit {
   hash: string;
@@ -79,23 +78,12 @@ export default function DashboardPage() {
   const [openFiles, setOpenFiles] = useState<string[]>([]);
   const [fileContent, setFileContent] = useState("");
   const [isFileLoading, setIsFileLoading] = useState(false);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [currentBranch, setCurrentBranch] = useState("main");
   const [isChangingBranch, setIsChangingBranch] = useState(false);
 
   // Runner state
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>({ status: "stopped", pid: null });
   const [runnerLogs, setRunnerLogs] = useState<string[]>([]);
   const [isRunnerLoading, setIsRunnerLoading] = useState(false);
-
-  // Git Collaboration state
-  const [syncStatus, setSyncStatus] = useState<SyncStatus>({ ahead: 0, behind: 0, upstream: "" });
-  const [branchProtected, setBranchProtected] = useState(false);
-  const [autoFetchIntervalMinutes, setAutoFetchIntervalMinutes] = useState(0);
-  const [isGitSyncing, setIsGitSyncing] = useState<"fetch" | "pull" | "push" | null>(null);
-  const [gitSyncError, setGitSyncError] = useState<string | null>(null);
-  const [conflictFiles, setConflictFiles] = useState<string[]>([]);
-  const [selectedConflictFile, setSelectedConflictFile] = useState<string | null>(null);
 
   // Diagnostics state
   const [diagData, setDiagData] = useState<DiagnosticDetails | null>(null);
@@ -141,6 +129,27 @@ export default function DashboardPage() {
     }, duration);
   };
 
+  const git = useGitSync(showNotification);
+  const {
+    syncStatus,
+    branchProtected,
+    autoFetchIntervalMinutes,
+    isGitSyncing,
+    gitSyncError,
+    pullDiverged,
+    conflictFiles,
+    selectedConflictFile,
+    setSelectedConflictFile,
+    branches,
+    currentBranch,
+    setCurrentBranch,
+    loadGitSyncStatus,
+    loadGitBranches,
+    loadConflictFiles,
+    handleGitSync,
+    handlePullStrategy,
+  } = git;
+
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       if (Notification.permission === "default") {
@@ -154,16 +163,7 @@ export default function DashboardPage() {
   const [isLiveTerminalActive, setIsLiveTerminalActive] = useState(false);
   const liveTerminalEndRef = useRef<HTMLDivElement | null>(null);
 
-  type DependencyInstallPhase = "installing" | "success" | "error";
-  interface DependencyInstallModalState {
-    phase: DependencyInstallPhase;
-    missingCount: number;
-    missingPackages: string[];
-    logs: string[];
-    error?: string;
-  }
   const [depInstallModal, setDepInstallModal] = useState<DependencyInstallModalState | null>(null);
-  const depInstallLogEndRef = useRef<HTMLDivElement | null>(null);
 
   // Timeline state
   const [allCommits, setAllCommits] = useState<RepoCommit[]>([]);
@@ -301,49 +301,6 @@ export default function DashboardPage() {
     }
   };
 
-  const loadGitBranches = async () => {
-    try {
-      const res = await fetch("/api/workspace/git?action=branches");
-      const data = await res.json();
-      if (!res.ok) {
-        showNotification(data.error || "Failed to load branches", "error");
-        return;
-      }
-      setBranches((data.branches as string[]) || []);
-      setCurrentBranch(data.current || "main");
-    } catch {
-      showNotification("Failed to load branches", "error");
-    }
-  };
-
-  const loadGitSyncStatus = async () => {
-    try {
-      const res = await fetch("/api/workspace/git?action=status");
-      const data = await res.json();
-      if (!res.ok) {
-        showNotification(data.error || "Failed to load sync status", "error");
-        return;
-      }
-      setSyncStatus((data.sync as SyncStatus) || { ahead: 0, behind: 0, upstream: "" });
-      if (typeof data.branchProtected === "boolean") {
-        setBranchProtected(data.branchProtected);
-      }
-      if (typeof data.autoFetchIntervalMinutes === "number") {
-        setAutoFetchIntervalMinutes(data.autoFetchIntervalMinutes);
-      }
-    } catch {
-      showNotification("Failed to load sync status", "error");
-    }
-  };
-
-  const loadConflictFiles = async () => {
-    try {
-      const res = await fetch("/api/workspace/git?action=conflicts");
-      const data = await res.json();
-      setConflictFiles((data.conflicts as string[]) || []);
-    } catch {}
-  };
-
   const loadDiagnostics = async () => {
     Promise.resolve().then(() => {
       setIsDiagLoading(true);
@@ -413,7 +370,7 @@ export default function DashboardPage() {
     const res = await fetch("/api/workspace/diagnostics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "install" }),
+      body: JSON.stringify({ action: "install", cleanModules: true }),
     });
 
     if (!res.ok) {
@@ -476,7 +433,11 @@ export default function DashboardPage() {
       await streamInstallOutput(appendLog);
 
       setDepInstallModal((prev) =>
-        prev ? { ...prev, phase: "success", logs: [...prev.logs, "All dependencies installed successfully."] } : prev
+        prev && !prev.logs.some((l) => /All dependencies installed successfully/i.test(l))
+          ? { ...prev, phase: "success", logs: [...prev.logs, "All dependencies installed successfully."] }
+          : prev
+            ? { ...prev, phase: "success" }
+            : prev
       );
       showNotification("Dependencies installed successfully!", "success");
 
@@ -575,12 +536,7 @@ export default function DashboardPage() {
           body: JSON.stringify({ action: "fetch" }),
         });
         if (res.ok) {
-          const data = await res.json();
-          if (data.sync) {
-            setSyncStatus(data.sync as SyncStatus);
-          } else {
-            loadGitSyncStatus();
-          }
+          await loadGitSyncStatus();
         }
       } catch {}
     }, intervalMs);
@@ -746,9 +702,7 @@ export default function DashboardPage() {
       const data = await res.json();
       if (data.success) {
         setCurrentBranch(data.current);
-        if (typeof data.branchProtected === "boolean") {
-          setBranchProtected(data.branchProtected);
-        }
+        await loadGitSyncStatus();
         loadWorkspaceFiles();
         setActiveFile(null);
         showNotification(`Switched to branch ${data.current}`, "success", 2500);
@@ -760,39 +714,6 @@ export default function DashboardPage() {
       showNotification(`Error switching branch: ${msg}`, "error");
     } finally {
       setIsChangingBranch(false);
-    }
-  };
-
-  const handleGitSync = async (action: "fetch" | "pull" | "push") => {
-    setIsGitSyncing(action);
-    setGitSyncError(null);
-    try {
-      const res = await fetch("/api/workspace/git", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const message = data.error || `Git ${action} failed`;
-        setGitSyncError(message);
-        showNotification(message, "error");
-        return;
-      }
-      if (data.sync) {
-        setSyncStatus(data.sync as SyncStatus);
-      } else {
-        await loadGitSyncStatus();
-      }
-      await loadConflictFiles();
-      await loadAllCommits();
-      showNotification(`Git ${action} completed successfully`, "success", 2500);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setGitSyncError(msg);
-      showNotification(msg, "error");
-    } finally {
-      setIsGitSyncing(null);
     }
   };
 
@@ -823,12 +744,6 @@ export default function DashboardPage() {
       liveTerminalEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [diagnosticLogs]);
-
-  useEffect(() => {
-    if (depInstallLogEndRef.current) {
-      depInstallLogEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [depInstallModal?.logs]);
 
   // Run diagnostics maintenance tasks with live streaming
   const handleMaintenanceAction = async (action: string) => {
@@ -889,7 +804,7 @@ export default function DashboardPage() {
   if (isLoadingProfile) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", backgroundColor: "var(--color-bg-default)", gap: "16px" }}>
-        <div className="spinner animate-pulse-glow" style={{ width: "40px", height: "40px" }}></div>
+        <Loader size="lg" label="Synchronizing workspace" />
         <div className="animate-pulse" style={{ color: "var(--color-fg-muted)", fontSize: "14px", fontWeight: "500", letterSpacing: "-0.2px" }}>
           Synchronizing Workspace...
         </div>
@@ -901,162 +816,11 @@ export default function DashboardPage() {
     <div className="app-container">
       {/* Dependency install progress modal */}
       {depInstallModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(10, 12, 16, 0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 99998,
-            padding: "24px",
-          }}
-        >
-          <div
-            className="animate-fade-slide"
-            style={{
-              width: "100%",
-              maxWidth: "520px",
-              backgroundColor: "var(--color-bg-overlay)",
-              border: "1px solid var(--color-border-default)",
-              borderRadius: "12px",
-              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.6)",
-              overflow: "hidden",
-            }}
-          >
-            <div style={{
-              padding: "16px 20px",
-              borderBottom: "1px solid var(--color-border-default)",
-              backgroundColor: "var(--color-bg-subtle)",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                {depInstallModal.phase === "installing" && (
-                  <div className="spinner" style={{ width: "16px", height: "16px", flexShrink: 0 }} />
-                )}
-                {depInstallModal.phase === "success" && (
-                  <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--color-success-fg)" }}>check_circle</span>
-                )}
-                {depInstallModal.phase === "error" && (
-                  <span className="material-symbols-outlined" style={{ fontSize: "18px", color: "var(--color-danger-fg)" }}>error</span>
-                )}
-                <div>
-                  <h3 style={{ margin: 0, fontSize: "15px", fontWeight: 700, color: "var(--color-fg-default)" }}>
-                    {depInstallModal.phase === "installing" && "Installing Dependencies"}
-                    {depInstallModal.phase === "success" && "Dependencies Installed"}
-                    {depInstallModal.phase === "error" && "Installation Failed"}
-                  </h3>
-                  <p style={{ margin: "2px 0 0", fontSize: "12px", color: "var(--color-fg-muted)" }}>
-                    {depInstallModal.missingCount} missing package{depInstallModal.missingCount === 1 ? "" : "s"} detected in this workspace
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-              {depInstallModal.phase === "installing" && (
-                <div style={{
-                  height: "4px",
-                  borderRadius: "999px",
-                  backgroundColor: "var(--color-bg-active)",
-                  overflow: "hidden",
-                }}>
-                  <div style={{
-                    height: "100%",
-                    width: "40%",
-                    borderRadius: "999px",
-                    backgroundColor: "var(--color-accent-fg)",
-                    animation: "depInstallProgress 1.2s ease-in-out infinite",
-                  }} />
-                </div>
-              )}
-              {depInstallModal.phase === "success" && (
-                <div style={{
-                  height: "4px",
-                  borderRadius: "999px",
-                  backgroundColor: "var(--color-success-fg)",
-                }} />
-              )}
-              {depInstallModal.phase === "error" && (
-                <div style={{
-                  height: "4px",
-                  borderRadius: "999px",
-                  backgroundColor: "var(--color-danger-fg)",
-                }} />
-              )}
-
-              {depInstallModal.missingPackages.length > 0 && depInstallModal.phase === "installing" && (
-                <p style={{ margin: 0, fontSize: "11px", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)" }}>
-                  {depInstallModal.missingPackages.slice(0, 6).join(", ")}
-                  {depInstallModal.missingPackages.length > 6
-                    ? ` +${depInstallModal.missingPackages.length - 6} more`
-                    : ""}
-                </p>
-              )}
-
-              <div style={{
-                backgroundColor: "#090d13",
-                border: "1px solid var(--color-border-default)",
-                borderRadius: "8px",
-                padding: "10px 12px",
-                fontFamily: "var(--font-mono)",
-                fontSize: "11px",
-                color: "#8b949e",
-                maxHeight: "180px",
-                overflowY: "auto",
-              }}>
-                {depInstallModal.logs.map((log, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      lineHeight: "1.5",
-                      whiteSpace: "pre-wrap",
-                      color: log.startsWith("Error:") ? "var(--color-danger-fg)" : "#8b949e",
-                    }}
-                  >
-                    {log}
-                  </div>
-                ))}
-                <div ref={depInstallLogEndRef} />
-              </div>
-
-              {depInstallModal.phase === "error" && depInstallModal.error && (
-                <p style={{ margin: 0, fontSize: "12px", color: "var(--color-danger-fg)" }}>
-                  {depInstallModal.error}
-                </p>
-              )}
-            </div>
-
-            <div style={{
-              padding: "12px 20px",
-              borderTop: "1px solid var(--color-border-default)",
-              display: "flex",
-              justifyContent: "flex-end",
-              gap: "8px",
-              backgroundColor: "var(--color-bg-subtle)",
-            }}>
-              {depInstallModal.phase === "error" && (
-                <button
-                  type="button"
-                  className="btn btn-sm btn-primary"
-                  onClick={() => runDependencyInstall(depInstallModal.missingPackages)}
-                >
-                  Retry
-                </button>
-              )}
-              {depInstallModal.phase !== "installing" && (
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => setDepInstallModal(null)}
-                >
-                  {depInstallModal.phase === "success" ? "Continue" : "Dismiss"}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <DependencyInstallModal
+          state={depInstallModal}
+          onDismiss={() => setDepInstallModal(null)}
+          onRetry={() => runDependencyInstall(depInstallModal.missingPackages)}
+        />
       )}
 
       {/* Toast Notification */}
@@ -1079,7 +843,7 @@ export default function DashboardPage() {
             overflow: "hidden",
           }}>
             {toast.type === "info" && (
-              <div className="w-4 h-4 border-2 border-[#58a6ff]/20 border-t-[#58a6ff] rounded-full animate-spin shrink-0"></div>
+              <Loader size="xs" className="shrink-0" label="Processing" />
             )}
             {toast.type === "success" && (
               <span className="material-symbols-outlined text-[18px] text-[#3fb950] shrink-0" style={{ fontWeight: 700 }}>check_circle</span>
@@ -1290,7 +1054,7 @@ export default function DashboardPage() {
                       style={{ minWidth: "120px" }}
                     >
                       {isRunnerLoading ? (
-                        <div className="spinner" style={{ width: "12px", height: "12px" }}></div>
+                        <Loader size="xs" label="Starting runner" />
                       ) : runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? (
                         <>
                           <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "white", marginRight: "4px" }}></span>
@@ -1649,304 +1413,32 @@ export default function DashboardPage() {
 
           {/* TAB 2: GIT COLLABORATION AND CONFLICTS PANEL */}
           {activeTab === "git" && (
-            <div className="animate-fade-slide" style={{ display: "flex", height: "100%", overflow: "hidden" }}>
-              {/* Sidebar Git Status Controls */}
-              <div style={{
-                width: "320px",
-                borderRight: "1px solid var(--color-border-default)",
-                backgroundColor: "var(--color-bg-subtle)",
-                padding: "24px 20px",
-                overflowY: "auto",
-                display: "flex",
-                flexDirection: "column",
-                gap: "24px",
-                flexShrink: 0,
-              }}>
-                <div>
-                  <h3 style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px", marginBottom: "12px" }}>
-                    Repository Sync
-                  </h3>
-                  
-                  <div className="card" style={{ padding: "16px", display: "flex", flexDirection: "column", gap: "12px", background: "rgba(22, 27, 34, 0.4)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "space-between", fontSize: "12px" }}>
-                      <span style={{ color: "var(--color-fg-muted)" }}>Upstream</span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "11px", fontWeight: 600, color: "var(--color-accent-fg)" }}>
-                        {syncStatus.upstream ? syncStatus.upstream.split("/").pop() : "origin/main"}
-                      </span>
-                    </div>
-
-                    {/* Visual Connection Map */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "4px 0" }}>
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
-                        <span style={{ fontSize: "11px", fontWeight: 600 }}>Local</span>
-                        <span style={{ fontSize: "10px", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)" }}>{currentBranch}</span>
-                      </div>
-                      
-                      <div style={{ display: "flex", alignItems: "center", flex: 2, position: "relative" }}>
-                        <div style={{ height: "2px", backgroundColor: "var(--color-border-default)", flex: 1 }}></div>
-                        <div style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: "20px",
-                          height: "20px",
-                          borderRadius: "50%",
-                          backgroundColor: "var(--color-bg-overlay)",
-                          border: "1px solid var(--color-border-default)",
-                          fontSize: "10px",
-                          zIndex: 1,
-                        }}>
-                          ⇄
-                        </div>
-                        <div style={{ height: "2px", backgroundColor: "var(--color-border-default)", flex: 1 }}></div>
-                      </div>
-
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
-                        <span style={{ fontSize: "11px", fontWeight: 600 }}>Upstream</span>
-                        <span style={{ fontSize: "10px", color: "var(--color-fg-muted)", fontFamily: "var(--font-mono)" }}>origin</span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-                        <span style={{ color: "var(--color-fg-muted)" }}>Ahead (Unpushed)</span>
-                        <span className={`badge ${syncStatus.ahead > 0 ? "badge-warning" : ""}`} style={{ fontSize: "11px" }}>
-                          {syncStatus.ahead} commits
-                        </span>
-                      </div>
-                      
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
-                        <span style={{ color: "var(--color-fg-muted)" }}>Behind (Unsynced)</span>
-                        <span className={`badge ${syncStatus.behind > 0 ? "badge-danger" : ""}`} style={{ fontSize: "11px" }}>
-                          {syncStatus.behind} commits
-                        </span>
-                      </div>
-                    </div>
-
-                    <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
-                      {(["fetch", "pull", "push"] as const).map((action) => (
-                        <button
-                          key={action}
-                          type="button"
-                          className="btn btn-sm"
-                          disabled={!!isGitSyncing || (action === "push" && branchProtected)}
-                          onClick={() => handleGitSync(action)}
-                          style={{
-                            flex: 1,
-                            textTransform: "capitalize",
-                            fontSize: "11px",
-                            fontWeight: 600,
-                            opacity: action === "push" && branchProtected ? 0.5 : 1,
-                          }}
-                          title={
-                            action === "push" && branchProtected
-                              ? "Push to main/master is disabled by branch protection"
-                              : undefined
-                          }
-                        >
-                          {isGitSyncing === action ? "..." : action}
-                        </button>
-                      ))}
-                    </div>
-
-                    {gitSyncError && (
-                      <div style={{
-                        fontSize: "11px",
-                        color: "var(--color-danger-fg)",
-                        backgroundColor: "var(--color-danger-bg)",
-                        border: "1px solid var(--color-danger-border)",
-                        borderRadius: "4px",
-                        padding: "6px 8px",
-                        lineHeight: "1.4",
-                      }}>
-                        {gitSyncError}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px", marginBottom: "12px" }}>
-                    Active Branches
-                  </h3>
-                  <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                    {branches.map((b) => {
-                      const isActive = currentBranch === b;
-                      return (
-                        <div
-                          key={b}
-                          style={{
-                            padding: "8px 12px",
-                            borderRadius: "6px",
-                            fontSize: "13px",
-                            backgroundColor: isActive ? "var(--color-accent-bg)" : "transparent",
-                            border: `1px solid ${isActive ? "var(--color-accent-border)" : "var(--color-border-default)"}`,
-                            fontWeight: isActive ? 600 : "normal",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            transition: "all 0.15s ease",
-                            cursor: "default",
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: isActive ? "var(--color-accent-fg)" : "var(--color-fg-muted)" }}>
-                              <line x1="6" y1="3" x2="6" y2="15" />
-                              <circle cx="18" cy="6" r="3" />
-                              <circle cx="6" cy="18" r="3" />
-                              <path d="M18 9a9 9 0 0 1-9 9" />
-                            </svg>
-                            <span>{b}</span>
-                          </div>
-                          {isActive && (
-                            <span style={{
-                              display: "inline-block",
-                              width: "6px",
-                              height: "6px",
-                              borderRadius: "50%",
-                              backgroundColor: "#3fb950",
-                              boxShadow: "0 0 8px #3fb950",
-                            }}></span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div>
-                  <h3 style={{ fontSize: "11px", fontWeight: "700", textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px", marginBottom: "12px" }}>
-                    Conflict Files
-                  </h3>
-                  {conflictFiles.length === 0 ? (
-                    <div style={{
-                      padding: "16px",
-                      borderRadius: "8px",
-                      backgroundColor: "rgba(63, 185, 80, 0.05)",
-                      color: "var(--color-success-fg)",
-                      border: "1px solid var(--color-success-border)",
-                      fontSize: "12px",
-                      lineHeight: "18px",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "6px",
-                    }}>
-                      <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span>✓</span> No Conflicts
-                      </div>
-                      <div style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>
-                        Workspace codebase compiles clean without merge issues.
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                      {conflictFiles.map((file) => {
-                        const isSelected = selectedConflictFile === file;
-                        return (
-                          <div
-                            key={file}
-                            onClick={() => setSelectedConflictFile(file)}
-                            style={{
-                              padding: "10px 14px",
-                              borderRadius: "6px",
-                              fontSize: "12px",
-                              border: `1px solid ${isSelected ? "var(--color-danger-border)" : "var(--color-border-default)"}`,
-                              backgroundColor: isSelected ? "var(--color-danger-bg)" : "rgba(248, 81, 73, 0.02)",
-                              color: isSelected ? "var(--color-danger-fg)" : "var(--color-fg-default)",
-                              cursor: "pointer",
-                              transition: "all 0.15s ease",
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: "4px",
-                            }}
-                          >
-                            <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: "6px" }}>
-                              <span className="material-symbols-outlined" style={{ fontSize: "14px", color: "var(--color-danger-fg)", fontWeight: 700 }}>error</span>
-                              <span>{file.split("/").pop()}</span>
-                            </div>
-                            <div style={{ fontSize: "10px", color: "var(--color-fg-muted)", wordBreak: "break-all", fontFamily: "var(--font-mono)" }}>
-                              {file}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Main Git Workspace Panel */}
-              <div style={{ flex: 1, overflow: "hidden", backgroundColor: "var(--color-bg-default)" }}>
-                {selectedConflictFile ? (
-                  <ConflictResolver
-                    relativeFile={selectedConflictFile}
-                    onResolved={() => {
-                      setSelectedConflictFile(null);
-                      loadConflictFiles();
-                      loadWorkspaceFiles();
-                    }}
-                  />
-                ) : (
-                  <div style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: "100%",
-                    padding: "48px 24px",
-                    textAlign: "center",
-                    maxWidth: "600px",
-                    margin: "0 auto",
-                    gap: "24px",
-                  }}>
-                    <div style={{
-                      width: "64px",
-                      height: "64px",
-                      borderRadius: "50%",
-                      backgroundColor: "rgba(88, 166, 255, 0.05)",
-                      border: "1px solid var(--color-border-default)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}>
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-fg"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="M22 12H2"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    </div>
-                    
-                    <div>
-                      <h2 style={{ fontSize: "20px", fontWeight: "700", letterSpacing: "-0.5px", margin: 0 }}>
-                        Git Collaboration Workspace
-                      </h2>
-                      <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "8px", lineHeight: "20px" }}>
-                        Manage local branch synchronization and resolve merge conflicts interactively. Click on an active conflict file from the left sidebar to open the resolver dashboard.
-                      </p>
-                    </div>
-
-                    <div className="card" style={{ width: "100%", padding: "16px 20px", textAlign: "left", display: "flex", flexDirection: "column", gap: "12px" }}>
-                      <div style={{ fontSize: "12px", fontWeight: 700, textTransform: "uppercase", color: "var(--color-fg-muted)", letterSpacing: "0.5px" }}>
-                        Repository Status Summary
-                      </div>
-                      
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", fontSize: "13px" }}>
-                        <div>
-                          <div style={{ color: "var(--color-fg-muted)", fontSize: "11px" }}>Current Workspace Directory</div>
-                          <div style={{ fontWeight: 600, fontFamily: "var(--font-mono)", fontSize: "12px", marginTop: "2px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                            {activeProfile?.workspacePath || "No path linked"}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div style={{ color: "var(--color-fg-muted)", fontSize: "11px" }}>Active Branch Node</div>
-                          <div style={{ fontWeight: 600, marginTop: "2px", display: "flex", alignItems: "center", gap: "6px" }}>
-                            <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: "#3fb950" }}></span>
-                            {currentBranch}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <GitSyncView
+              activeProfile={activeProfile}
+              syncStatus={syncStatus}
+              branchProtected={branchProtected}
+              isGitSyncing={isGitSyncing}
+              gitSyncError={gitSyncError}
+              pullDiverged={pullDiverged}
+              branches={branches}
+              currentBranch={currentBranch}
+              conflictFiles={conflictFiles}
+              selectedConflictFile={selectedConflictFile}
+              onSelectConflictFile={setSelectedConflictFile}
+              onGitSync={(action) => handleGitSync(action, loadAllCommits)}
+              onPullStrategy={(strategy) => handlePullStrategy(strategy, loadAllCommits)}
+              onRefresh={() => {
+                loadGitSyncStatus();
+                loadAllCommits();
+                loadConflictFiles();
+              }}
+              onConflictResolved={() => {
+                setSelectedConflictFile(null);
+                loadConflictFiles();
+                loadWorkspaceFiles();
+                loadGitSyncStatus();
+              }}
+            />
           )}
 
           {/* TAB 3: DIAGNOSTICS DASHBOARD PANEL */}
@@ -1984,7 +1476,7 @@ export default function DashboardPage() {
 
               {isDiagLoading ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "32px", backgroundColor: "var(--color-bg-subtle)", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
-                  <div className="spinner"></div>
+                  <Loader size="sm" label="Scanning workspace" />
                   <span style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>Scanning workspace directory packages and system environment variables...</span>
                 </div>
               ) : diagData ? (
@@ -2063,7 +1555,7 @@ export default function DashboardPage() {
                   <div className="card" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
                     <div className="card-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 20px" }}>
                       <span style={{ fontSize: "13px", fontWeight: "600" }}>Diagnostics & Repair Console</span>
-                      {isActionLoading && <div className="spinner" style={{ width: "12px", height: "12px" }}></div>}
+                      {isActionLoading && <Loader size="xs" label="Running action" />}
                     </div>
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 2fr", minHeight: "260px" }}>
@@ -2249,7 +1741,7 @@ export default function DashboardPage() {
 
               {isTimelineLoading ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "12px", padding: "32px", backgroundColor: "var(--color-bg-subtle)", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
-                  <div className="spinner"></div>
+                  <Loader size="sm" label="Reading git history" />
                   <span style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>Reading repository Git history records...</span>
                 </div>
               ) : (

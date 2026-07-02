@@ -1,0 +1,25 @@
+{
+  "appId": "com.omnisync.app",
+  "productName": "OmniSync",
+  "directories": {
+    "output": "dist"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "package.json",
+    "public/**/*",
+    ".next/**/*",
+    "next.config.ts"
+  ],
+  "mac": {
+    "category": "public.app-category.developer-tools",
+    "target": ["dmg"]
+  },
+  "win": {
+    "target": ["nsis"]
+  },
+  "linux": {
+    "target": ["AppImage"]
+  }
+}

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { ConflictBlock } from "@/lib/git";
 import Tooltip from "@/components/Tooltip";
+import Loader from "@/components/Loader";
 
 interface ConflictResolverProps {
   relativeFile: string;
@@ -133,7 +134,14 @@ export default function ConflictResolver({ relativeFile, onResolved }: ConflictR
         throw new Error(data.error);
       }
 
-      alert("Conflicts resolved and saved successfully.");
+      // Stage resolved file in git index
+      await fetch("/api/workspace/git", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stage-file", file: relativeFile }),
+      });
+
+      alert("Conflicts resolved, saved, and staged successfully.");
       onResolved();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -144,7 +152,7 @@ export default function ConflictResolver({ relativeFile, onResolved }: ConflictR
   if (isLoading) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-        <div className="spinner"></div>
+        <Loader size="md" label="Loading conflict" />
       </div>
     );
   }

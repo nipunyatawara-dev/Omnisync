@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { GitCommit, DiffLine } from "@/lib/git";
 import Tooltip from "@/components/Tooltip";
+import Loader from "@/components/Loader";
 
 interface DiffViewerProps {
   selectedFile: string | null;
@@ -240,7 +241,7 @@ export default function DiffViewer({ selectedFile }: DiffViewerProps) {
           <div style={{ flex: 1, overflowY: "auto" }}>
             {isLoadingHistory ? (
               <div style={{ display: "flex", justifyContent: "center", padding: "16px" }}>
-                <div className="spinner"></div>
+                <Loader size="sm" label="Loading commit history" />
               </div>
             ) : commits.length === 0 ? (
               <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", padding: "8px" }}>
@@ -370,7 +371,7 @@ export default function DiffViewer({ selectedFile }: DiffViewerProps) {
           <div style={{ flex: 1, overflow: "auto", padding: "8px" }}>
             {isLoadingDiff ? (
               <div style={{ display: "flex", justifyContent: "center", padding: "16px" }}>
-                <div className="spinner"></div>
+                <Loader size="sm" label="Loading diff" />
               </div>
             ) : !selectedCommit ? (
               <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", padding: "12px", textAlign: "center" }}>

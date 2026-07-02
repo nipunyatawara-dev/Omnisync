@@ -128,7 +128,7 @@ function createWindow() {
     minWidth: 1000,
     minHeight: 700,
     icon: path.join(__dirname, "public", "icon.png"),
-    titleBarStyle: "hiddenInset", // Sleek macOS style
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
     backgroundColor: "#0d1117",
     show: false, // Don't show until ready-to-show
     webPreferences: {

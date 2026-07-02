@@ -17,6 +17,7 @@ export interface UserProfile {
   workspacePath?: string; // Selected local repo workspace directory path
   workspaceType?: "automatic" | "manual";
   branchProtection?: boolean;
+  protectedBranches?: string[];
   autoFetch?: boolean;
   port?: number;
   runCommand?: string;
@@ -37,19 +38,20 @@ const LEGACY_IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
 function getMachineSecret(): string {
+  if (process.env.OMNISYNC_ENCRYPTION_SECRET) {
+    return process.env.OMNISYNC_ENCRYPTION_SECRET;
+  }
   try {
     const userInfo = os.userInfo();
     return `${userInfo.username}-${userInfo.homedir}-${os.hostname()}`;
   } catch {
-    return "omnisync-fallback-secret-2026";
+    throw new Error(
+      "OMNISYNC_ENCRYPTION_SECRET is not set and OS user info is unavailable. Cannot encrypt credentials."
+    );
   }
 }
 
-const ENCRYPTION_KEY = crypto.scryptSync(
-  process.env.OMNISYNC_ENCRYPTION_SECRET || getMachineSecret(),
-  "omnisync-salt-123",
-  32
-);
+const ENCRYPTION_KEY = crypto.scryptSync(getMachineSecret(), "omnisync-salt-123", 32);
 
 export function encrypt(text: string): string {
   const iv = crypto.randomBytes(IV_LENGTH);

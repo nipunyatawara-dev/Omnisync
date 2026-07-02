@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import React from "react";
+import Loader from "@/components/Loader";
 
 interface CodeViewerProps {
   filePath: string;
@@ -174,7 +175,7 @@ export default function CodeViewer({ filePath, content, isLoading }: CodeViewerP
         <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px", fontFamily: "var(--font-mono)" }}>
           <span style={{ fontWeight: 600, color: "var(--color-fg-default)" }}>{filePath}</span>
           {isLoading && (
-            <span className="spinner animate-pulse-glow" style={{ width: "10px", height: "10px", border: "1px solid var(--color-border-default)", borderTop: "1px solid var(--color-accent-fg)", margin: "0 4px" }}></span>
+            <Loader size="xs" className="mx-1" label="Loading file" />
           )}
           <span style={{ color: "var(--color-fg-muted)" }}>|</span>
           <span style={{ color: "var(--color-fg-muted)" }}>{lines.length} lines</span>

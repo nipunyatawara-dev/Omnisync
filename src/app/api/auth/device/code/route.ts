@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
-import { getOauthConfig } from "@/lib/profiles";
-
-const DEFAULT_CLIENT_ID = "Ov23li8zIwN0BXPmjmA4"; // Default public Client ID for OmniSync Device Flow
+import { requireGithubClientId } from "@/lib/githubOAuth";
 
 export async function POST() {
   try {
-    const config = await getOauthConfig();
-    const clientId = config.githubClientId || process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || DEFAULT_CLIENT_ID;
+    const clientId = await requireGithubClientId();
 
     const res = await fetch("https://github.com/login/device/code", {
       method: "POST",
@@ -34,6 +31,9 @@ export async function POST() {
       expiresIn: data.expires_in,
     });
   } catch (error: unknown) {
+    if (error instanceof Error && error.message.includes("not configured")) {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     console.error("[auth/device/code] failed:", error);
     return NextResponse.json({ error: "Failed to start device authorization" }, { status: 500 });
   }

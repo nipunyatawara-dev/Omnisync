@@ -172,18 +172,11 @@ function renderHtmlResponse(
       color: #8b949e;
       line-height: 1.5;
     }
-    .spinner {
-      border: 3px solid rgba(88, 166, 255, 0.1);
-      border-top: 3px solid #58a6ff;
-      border-radius: 50%;
-      width: 24px;
-      height: 24px;
-      animation: spin 1s linear infinite;
+    .loader-note {
       margin: 20px auto 0;
-    }
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
+      font-size: 13px;
+      color: #58a6ff;
+      letter-spacing: 0.08em;
     }
   </style>
 </head>
@@ -192,7 +185,7 @@ function renderHtmlResponse(
     <h1>${success ? "Sign-in Successful" : "Sign-in Failed"}</h1>
     <p>${success ? `Successfully authenticated as <strong>@${safeUsername}</strong>.` : `Error: ${safeError}`}</p>
     <p>${success ? "Closing this window and returning to OmniSync..." : "You can close this window and try again."}</p>
-    ${success ? '<div class="spinner"></div>' : ""}
+    ${success ? '<p class="loader-note" aria-live="polite">Returning to OmniSync…</p>' : ""}
   </div>
   <script${nonceAttr}>
     const status = ${statusObject};

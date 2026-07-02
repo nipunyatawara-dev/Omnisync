@@ -5,6 +5,10 @@ import { useRouter as useAppRouter } from "next/navigation";
 import { applyAccentTheme } from "@/lib/accentTheme";
 import type { AccentColor } from "@/lib/globalSettings";
 import { UserProfile } from "@/lib/profiles";
+import RepoVisibilityIcon from "@/components/RepoVisibilityIcon";
+import GitHubConnectModal from "@/components/GitHubConnectModal";
+import GitHubConnectedBadge from "@/components/GitHubConnectedBadge";
+import Loader from "@/components/Loader";
 
 declare global {
   interface Window {
@@ -50,7 +54,6 @@ export default function SetupPage() {
   const [autoFetchInterval, setAutoFetchInterval] = useState("5");
   const [terminalShell, setTerminalShell] = useState("zsh");
   const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [enableTelemetry, setEnableTelemetry] = useState(true);
   const [accentColor, setAccentColor] = useState("default");
 
   // Load from server (fallback to localStorage for legacy installs)
@@ -70,7 +73,6 @@ export default function SetupPage() {
             setAutoFetchInterval(s.autoFetchInterval || "5");
             setTerminalShell(s.terminalShell || "zsh");
             setShowHiddenFiles(!!s.showHiddenFiles);
-            setEnableTelemetry(s.enableTelemetry !== false);
             setAccentColor(s.accentColor || "default");
             applyAccentTheme((s.accentColor || "default") as AccentColor);
             return;
@@ -84,7 +86,6 @@ export default function SetupPage() {
       setAutoFetchInterval(localStorage.getItem("omnisync_global_auto_fetch_interval") || "5");
       setTerminalShell(localStorage.getItem("omnisync_global_terminal_shell") || "zsh");
       setShowHiddenFiles(localStorage.getItem("omnisync_global_show_hidden") === "true");
-      setEnableTelemetry(localStorage.getItem("omnisync_global_telemetry") !== "false");
       const cachedAccent = (localStorage.getItem("omnisync_global_accent") || "default") as AccentColor;
       setAccentColor(cachedAccent);
       applyAccentTheme(cachedAccent);
@@ -104,7 +105,7 @@ export default function SetupPage() {
       autoFetchInterval,
       terminalShell,
       showHiddenFiles,
-      enableTelemetry,
+      enableTelemetry: false,
       accentColor,
     };
 
@@ -130,7 +131,6 @@ export default function SetupPage() {
     localStorage.setItem("omnisync_global_auto_fetch_interval", autoFetchInterval);
     localStorage.setItem("omnisync_global_terminal_shell", terminalShell);
     localStorage.setItem("omnisync_global_show_hidden", String(showHiddenFiles));
-    localStorage.setItem("omnisync_global_telemetry", String(enableTelemetry));
     localStorage.setItem("omnisync_global_accent", accentColor);
     applyAccentTheme(accentColor as AccentColor);
     alert("Global settings saved successfully!");
@@ -275,7 +275,7 @@ export default function SetupPage() {
 
         if (data.status === "success") {
           active = false;
-          setOauthStatusText("Successfully authenticated!");
+          setOauthStatusText("Signed in — preparing your workspace…");
           setOauthState("success");
           
           setGitUsername(data.username);
@@ -291,7 +291,7 @@ export default function SetupPage() {
           });
           setManualPath(process.cwd());
           
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1400));
           setIsOAuthModalOpen(false);
           setOauthState("idle");
           setStep("profile-selection");
@@ -352,6 +352,8 @@ export default function SetupPage() {
   const [isRepoDropdownOpen, setIsRepoDropdownOpen] = useState(false);
   const [isFetchingRepos, setIsFetchingRepos] = useState(false);
   const [clonePath, setClonePath] = useState("");
+  const [defaultCloneParent, setDefaultCloneParent] = useState("");
+  const [pathPlaceholder, setPathPlaceholder] = useState("~/Documents/GitHub/project");
   const [cloneStatus, setCloneStatus] = useState<"idle" | "cloning" | "success" | "error">("idle");
   const [cloneError, setCloneError] = useState("");
   const [cloneLogs, setCloneLogs] = useState<string[]>([]);
@@ -373,40 +375,65 @@ export default function SetupPage() {
     }
   }, [cloneLogs]);
 
+  // Resolve OS home directory for default clone paths (e.g. /Users/shockagg/Documents/GitHub)
+  useEffect(() => {
+    fetch("/api/system/paths")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.defaultCloneParent) {
+          setDefaultCloneParent(data.defaultCloneParent);
+          setPathPlaceholder(`${data.defaultCloneParent}/project`);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Fetch remote repositories asynchronously when entering Step 3
   useEffect(() => {
     let active = true;
     if (step === "repo-selection") {
-      Promise.resolve().then(() => {
+      Promise.resolve().then(async () => {
         if (!active) return;
+
+        let cloneParent = defaultCloneParent;
+        if (!cloneParent) {
+          try {
+            const pathsRes = await fetch("/api/system/paths");
+            const pathsData = await pathsRes.json();
+            if (pathsData.defaultCloneParent) {
+              cloneParent = pathsData.defaultCloneParent;
+              setDefaultCloneParent(cloneParent);
+              setPathPlaceholder(`${cloneParent}/project`);
+            }
+          } catch {}
+        }
+
         if (githubConnected) {
           setSetupMode("clone");
           setIsFetchingRepos(true);
-          // Send the in-memory token only during initial setup; returning
-          // sessions rely on the server-stored token.
           const options = gitToken ? { headers: { Authorization: `Bearer ${gitToken}` } } : undefined;
-          fetch("/api/github/repos", options)
-            .then((res) => res.json())
-            .then((data) => {
-              if (!active) return;
-              if (data.repos) {
-                setReposList(data.repos as UIRepository[]);
-                if (data.repos.length > 0) {
-                  setSelectedRepoId(data.repos[0].id.toString());
-                  setClonePath(`/Users/username/Documents/GitHub/${data.repos[0].name}`);
+          try {
+            const res = await fetch("/api/github/repos", options);
+            const data = await res.json();
+            if (!active) return;
+            if (data.repos) {
+              setReposList(data.repos as UIRepository[]);
+              if (data.repos.length > 0) {
+                const firstRepo = data.repos[0];
+                setSelectedRepoId(firstRepo.id.toString());
+                if (cloneParent) {
+                  setClonePath(`${cloneParent}/${firstRepo.name}`);
                 }
-              } else {
-                setReposList([]);
               }
-              setIsFetchingRepos(false);
-            })
-            .catch((err) => {
-              console.error(err);
-              if (active) {
-                setReposList([]);
-                setIsFetchingRepos(false);
-              }
-            });
+            } else {
+              setReposList([]);
+            }
+          } catch (err) {
+            console.error(err);
+            if (active) setReposList([]);
+          } finally {
+            if (active) setIsFetchingRepos(false);
+          }
         } else {
           setSetupMode("local");
         }
@@ -424,8 +451,13 @@ export default function SetupPage() {
     setCloneStatus("idle");
     const repo = reposList.find((r) => r.id.toString() === repoId);
     if (repo) {
-      const defaultParent = clonePath ? clonePath.substring(0, clonePath.lastIndexOf("/")) : "/Users/username/Documents/GitHub";
-      setClonePath(`${defaultParent}/${repo.name}`);
+      const parentFromPath = clonePath.includes("/")
+        ? clonePath.substring(0, clonePath.lastIndexOf("/"))
+        : "";
+      const defaultParent = parentFromPath || defaultCloneParent;
+      if (defaultParent) {
+        setClonePath(`${defaultParent}/${repo.name}`);
+      }
     }
   };
 
@@ -888,23 +920,11 @@ export default function SetupPage() {
             {/* Top Right Profile Info, Settings, and Logout */}
             <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
               {githubUserDetail && (
-                <div style={{ display: "flex", alignItems: "center", gap: "10px", marginRight: "8px" }}>
-                  {githubUserDetail.avatarUrl ? (
-                    <img
-                      src={githubUserDetail.avatarUrl}
-                      alt={githubUserDetail.name}
-                      style={{ width: "28px", height: "28px", borderRadius: "50%", border: "1px solid var(--color-border-default)" }}
-                    />
-                  ) : (
-                    <div style={{ width: "28px", height: "28px", borderRadius: "50%", backgroundColor: "var(--color-bg-active)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-on-surface-variant"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                    </div>
-                  )}
-                  <div style={{ textAlign: "left", lineHeight: "1.2" }}>
-                    <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--color-fg-default)" }}>{githubUserDetail.name}</div>
-                    <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>@{githubUserDetail.login}</div>
-                  </div>
-                </div>
+                <GitHubConnectedBadge
+                  name={githubUserDetail.name}
+                  login={githubUserDetail.login}
+                  avatarUrl={githubUserDetail.avatarUrl}
+                />
               )}
               
               <button
@@ -1238,7 +1258,7 @@ export default function SetupPage() {
                 <div>
                   {isFetchingRepos ? (
                     <div className="flex flex-col items-center justify-center py-xl gap-sm border border-outline-variant rounded-xl bg-surface-container/50">
-                      <div className="w-8 h-8 border-3 border-[#58a6ff]/10 border-t-[#58a6ff] rounded-full animate-spin"></div>
+                      <Loader size="md" label="Fetching repositories" />
                       <span className="text-[13px] text-on-surface-variant">Fetching your GitHub repositories...</span>
                     </div>
                   ) : reposList.length === 0 ? (
@@ -1270,9 +1290,10 @@ export default function SetupPage() {
                               if (!selectedRepo) return <span className="text-on-surface-variant">Select a repository</span>;
                               return (
                                 <span className="flex items-center gap-xs truncate">
-                                  <span className="material-symbols-outlined text-[16px] text-on-surface-variant shrink-0">
-                                    {selectedRepo.private ? "lock" : "public"}
-                                  </span>
+                                  <RepoVisibilityIcon
+                                    isPrivate={selectedRepo.private}
+                                    className="text-on-surface-variant"
+                                  />
                                   <span className="truncate">{selectedRepo.fullName}</span>
                                 </span>
                               );
@@ -1309,9 +1330,10 @@ export default function SetupPage() {
                                       }`}
                                     >
                                       <span className="flex items-center gap-xs truncate">
-                                        <span className={`material-symbols-outlined text-[16px] shrink-0 ${isSelected ? "text-accent-fg" : "text-on-surface-variant"}`}>
-                                          {repo.private ? "lock" : "public"}
-                                        </span>
+                                        <RepoVisibilityIcon
+                                          isPrivate={repo.private}
+                                          className={isSelected ? "text-accent-fg" : "text-on-surface-variant"}
+                                        />
                                         <span className="truncate">{repo.fullName}</span>
                                       </span>
                                       {isSelected && (
@@ -1343,7 +1365,7 @@ export default function SetupPage() {
                               setCloneError("");
                               setCloneStatus("idle");
                             }}
-                            placeholder="/Users/username/Documents/GitHub/project"
+                            placeholder={pathPlaceholder}
                             required
                             disabled={cloneStatus === "cloning" || cloneStatus === "success"}
                           />
@@ -1376,7 +1398,7 @@ export default function SetupPage() {
                       {cloneStatus === "cloning" && (
                         <div className="flex flex-col gap-md mt-md">
                           <div className="flex items-center gap-sm p-sm bg-surface-container rounded-lg border border-outline-variant/60">
-                            <div className="w-4 h-4 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+                            <Loader size="xs" label="Cloning repository" />
                             <span className="text-[13px] text-on-surface font-medium">
                               Cloning repository &amp; configuring diagnostics...
                             </span>
@@ -1462,7 +1484,7 @@ export default function SetupPage() {
                           setManualError("");
                           setManualStatus("idle");
                         }}
-                        placeholder="/Users/username/Documents/GitHub/project"
+                        placeholder={pathPlaceholder}
                         required
                       />
                       {typeof window !== "undefined" && window.electron && (
@@ -1492,7 +1514,7 @@ export default function SetupPage() {
 
                   {manualStatus === "scanning" && (
                     <div className="flex items-center gap-sm p-md bg-surface rounded-lg border border-outline-variant">
-                      <div className="w-5 h-5 border-2 border-[#58a6ff]/10 border-t-[#58a6ff] rounded-full animate-spin"></div>
+                      <Loader size="sm" label="Scanning directory" />
                       <span className="text-[13px] text-on-surface-variant">
                         Analyzing node compatibility levels and package.json configurations...
                       </span>
@@ -1721,19 +1743,6 @@ export default function SetupPage() {
                       />
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <div>
-                        <div style={{ fontSize: "12px", fontWeight: 600 }}>Anonymous Telemetry</div>
-                        <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>Share workspace diagnostics reports to help improve OmniSync</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={enableTelemetry}
-                        onChange={(e) => setEnableTelemetry(e.target.checked)}
-                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
-                      />
-                    </div>
-
                     <button
                       type="button"
                       className="btn btn-sm btn-primary"
@@ -1941,106 +1950,26 @@ export default function SetupPage() {
       )}
 
 
-      {/* GITHUB DEVICE FLOW MODAL */}
-      {isOAuthModalOpen && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-lg animate-fade-in">
-          <div className="animate-fade-slide bg-[#161b22] border border-[#30363d] rounded-2xl w-[500px] max-w-full shadow-2xl p-xl relative flex flex-col items-center select-none text-center gap-lg">
-            {/* Absolute Close Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsOAuthModalOpen(false);
-                setOauthState("idle");
-              }}
-              className="absolute top-5 right-5 text-[#8b949e] hover:text-[#c9d1d9] transition-colors bg-transparent border-0 cursor-pointer p-1"
-              aria-label="Close"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-
-            {/* GitHub Header Icon */}
-            <div className="w-14 h-14 rounded-xl bg-[#24292e] flex items-center justify-center border border-[#30363d] shadow-sm mt-2">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-white">
-                <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
-              </svg>
-            </div>
-
-            {/* Header Text */}
-            <div className="flex flex-col gap-1 w-full">
-              <h3 className="text-2xl font-bold text-[#f0f6fc]">
-                Link GitHub Account
-              </h3>
-              <p className="text-sm text-[#8b949e] px-lg">
-                Enter this verification code on GitHub to authorize OmniSync.
-              </p>
-            </div>
-
-            {/* Modal Body */}
-            <div className="w-full flex flex-col items-center gap-lg">
-              {oauthState === "success" ? (
-                <div className="flex flex-col items-center gap-md py-lg w-full animate-fade-in">
-                  <div className="text-5xl text-[#2ea44f] animate-bounce">✔</div>
-                  <div className="text-center font-medium text-base text-[#f0f6fc]">
-                    {oauthStatusText}
-                  </div>
-                </div>
-              ) : oauthState === "authorizing" && userCode ? (
-                <div className="w-full flex flex-col gap-lg items-center">
-                  {/* Centered Middle-Aligned Clickable Code Copy Box */}
-                  <div
-                    onClick={() => {
-                      navigator.clipboard.writeText(userCode);
-                      setCopiedCode(true);
-                      setTimeout(() => setCopiedCode(false), 1500);
-                    }}
-                    className="w-full py-md px-lg bg-[#0d1117] border border-[#30363d] rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-[#58a6ff]/40 transition-all duration-150 select-none group"
-                  >
-                    <span className="text-[10px] text-[#8b949e] font-semibold uppercase tracking-wider mb-1">Verification Code</span>
-                    <span className="font-mono text-3xl font-extrabold tracking-widest text-[#58a6ff] group-hover:scale-102 transition-transform">{userCode}</span>
-                    <span className="text-xs text-[#8b949e] mt-1.5 font-medium group-hover:text-[#c9d1d9] transition-colors">
-                      {copiedCode ? "Copied! ✓" : "Click code to copy"}
-                    </span>
-                  </div>
-
-                  {/* Open GitHub Link */}
-                  <a
-                    href={verificationUri}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="w-full text-center py-md bg-[#238636] hover:bg-[#2ea44f] text-white rounded-xl text-base font-semibold cursor-pointer transition-colors no-underline shadow-md flex items-center justify-center gap-sm"
-                  >
-                    <span>Authorize on GitHub</span>
-                    <span className="text-xs">➔</span>
-                  </a>
-
-                  {/* Centered Active listening status indicator */}
-                  <div className="flex items-center gap-sm justify-center text-xs text-[#8b949e] select-none py-xs w-full">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#58a6ff] opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#58a6ff]"></span>
-                    </span>
-                    <span>{oauthStatusText}</span>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-md py-lg w-full">
-                  <div className="w-10 h-10 border-3 border-[#58a6ff]/10 border-t-[#58a6ff] rounded-full animate-spin"></div>
-                  <div className="text-center font-medium text-sm text-[#f0f6fc]">
-                    {oauthStatusText}
-                  </div>
-                </div>
-              )}
-
-              {/* Modal Footer */}
-              <p className="text-xs text-[#8b949e]/50 text-center leading-relaxed pt-md border-t border-[#30363d]/30 w-full select-none">
-                By authorizing, you allow OmniSync to store security tokens locally.
-              </p>
-            </div>
-          </div>
-        </div>
+      {isOAuthModalOpen && oauthState !== "idle" && (
+        <GitHubConnectModal
+          phase={oauthState === "success" ? "success" : "authorizing"}
+          userCode={userCode}
+          verificationUri={verificationUri}
+          statusText={oauthStatusText}
+          copiedCode={copiedCode}
+          username={githubUserDetail?.login || gitUsername}
+          displayName={githubUserDetail?.name}
+          avatarUrl={githubUserDetail?.avatarUrl}
+          onCopyCode={() => {
+            navigator.clipboard.writeText(userCode);
+            setCopiedCode(true);
+            setTimeout(() => setCopiedCode(false), 1500);
+          }}
+          onClose={() => {
+            setIsOAuthModalOpen(false);
+            setOauthState("idle");
+          }}
+        />
       )}
     </div>
   );

@@ -6,6 +6,7 @@ import {
   getActiveProfileId,
   setActiveProfileId,
   deleteProfile,
+  verifyPassword,
   type UserProfile,
 } from "@/lib/profiles";
 
@@ -45,9 +46,32 @@ export async function POST(request: Request) {
     }
 
     if (action === "select") {
-      const { id } = body;
+      const { id, password } = body;
+      if (id) {
+        const profiles = await getProfiles();
+        const target = profiles.find((p) => p.id === id);
+        if (target?.password) {
+          if (!password || !verifyPassword(String(password), target.password)) {
+            return NextResponse.json({ error: "Invalid profile password" }, { status: 403 });
+          }
+        }
+      }
       await setActiveProfileId(id);
       return NextResponse.json({ success: true });
+    }
+
+    if (action === "verify-password") {
+      const { id, password } = body;
+      const profiles = await getProfiles();
+      const target = profiles.find((p) => p.id === id);
+      if (!target) {
+        return NextResponse.json({ error: "Profile not found" }, { status: 404 });
+      }
+      if (!target.password) {
+        return NextResponse.json({ success: true, required: false });
+      }
+      const valid = !!password && verifyPassword(String(password), target.password);
+      return NextResponse.json({ success: valid, required: true });
     }
 
     if (action === "update") {

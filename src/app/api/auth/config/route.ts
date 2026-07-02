@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { getOauthConfig, saveOauthConfig } from "@/lib/profiles";
+import { saveOauthConfig } from "@/lib/profiles";
+import { resolveGithubClientId } from "@/lib/githubOAuth";
 
 export async function GET() {
   try {
-    const config = await getOauthConfig();
-    const defaultClientId = "Ov23li8zIwN0BXPmjmA4";
-    const clientId = config.githubClientId || process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID || defaultClientId;
+    const clientId = await resolveGithubClientId();
     return NextResponse.json({
-      hasConfig: true,
-      clientId,
+      hasConfig: !!clientId,
+      clientId: clientId || "",
     });
   } catch (error: unknown) {
     console.error("[auth/config] GET failed:", error);
