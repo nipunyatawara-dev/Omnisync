@@ -142,28 +142,33 @@ export interface GitWorkingFile {
   staged: boolean;
 }
 
+export function parseGitPorcelainLine(line: string): GitWorkingFile | null {
+  if (!line.trim()) return null;
+  const indexStatus = line[0];
+  const workTreeStatus = line[1];
+  const filePath = line.slice(3).trim();
+  const staged = indexStatus !== " " && indexStatus !== "?";
+  const code = staged ? indexStatus : workTreeStatus;
+
+  let status: GitFileStatus = "modified";
+  if (code === "?" || code === "!") status = code === "?" ? "untracked" : "ignored";
+  else if (code === "A") status = "added";
+  else if (code === "D") status = "deleted";
+  else if (code === "R") status = "renamed";
+  else if (code === "C") status = "copied";
+  else if (code === "U" || indexStatus === "U" || workTreeStatus === "U") status = "conflicted";
+
+  return { path: filePath, status, staged };
+}
+
 export async function gitWorkingStatus(cwd: string): Promise<GitWorkingFile[]> {
   const output = await runGit(["status", "--porcelain=v1", "-uall"], cwd);
   if (!output) return [];
 
   const files: GitWorkingFile[] = [];
   for (const line of output.split("\n")) {
-    if (!line.trim()) continue;
-    const indexStatus = line[0];
-    const workTreeStatus = line[1];
-    const filePath = line.slice(3).trim();
-    const staged = indexStatus !== " " && indexStatus !== "?";
-    const code = staged ? indexStatus : workTreeStatus;
-
-    let status: GitFileStatus = "modified";
-    if (code === "?" || code === "!") status = code === "?" ? "untracked" : "ignored";
-    else if (code === "A") status = "added";
-    else if (code === "D") status = "deleted";
-    else if (code === "R") status = "renamed";
-    else if (code === "C") status = "copied";
-    else if (code === "U" || indexStatus === "U" || workTreeStatus === "U") status = "conflicted";
-
-    files.push({ path: filePath, status, staged });
+    const file = parseGitPorcelainLine(line);
+    if (file) files.push(file);
   }
   return files;
 }
@@ -242,6 +247,15 @@ function runGit(args: string[], cwd: string): Promise<string> {
       }
     );
   });
+}
+
+export async function getRemoteOriginUrl(cwd: string): Promise<string | null> {
+  try {
+    const url = await runGit(["remote", "get-url", "origin"], cwd);
+    return url || null;
+  } catch {
+    return null;
+  }
 }
 
 // Get current active branch

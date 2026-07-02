@@ -9,6 +9,7 @@ interface GitSyncViewProps {
   activeProfile: UserProfile | null;
   syncStatus: SyncStatus;
   branchProtected: boolean;
+  changesRefreshKey?: number;
   isGitSyncing: "fetch" | "pull" | "push" | "pull-merge" | "pull-rebase" | null;
   gitSyncError: string | null;
   pullDiverged: boolean;
@@ -27,6 +28,7 @@ export default function GitSyncView({
   activeProfile,
   syncStatus,
   branchProtected,
+  changesRefreshKey = 0,
   isGitSyncing,
   gitSyncError,
   pullDiverged,
@@ -70,6 +72,7 @@ export default function GitSyncView({
           </h3>
 
           <div
+            id="tour-git-sync"
             className="card"
             style={{
               padding: "16px",
@@ -234,7 +237,13 @@ export default function GitSyncView({
           </div>
         </div>
 
-        <GitChangesPanel branchProtected={branchProtected} onCommitted={onRefresh} />
+        <div id="tour-git-changes">
+          <GitChangesPanel
+            branchProtected={branchProtected}
+            refreshKey={changesRefreshKey}
+            onCommitted={onRefresh}
+          />
+        </div>
 
         <div>
           <h3
@@ -300,7 +309,7 @@ export default function GitSyncView({
           </div>
         </div>
 
-        <div>
+        <div id="tour-git-conflicts">
           <h3
             style={{
               fontSize: "11px",

@@ -1,30 +1,13 @@
 import { promises as fs } from "fs";
 import path from "path";
+import {
+  DEFAULT_GLOBAL_SETTINGS,
+  type GlobalSettings,
+  autoFetchIntervalMs,
+} from "@/lib/globalSettingsTypes";
 
-export type AccentColor = "default" | "emerald" | "royal" | "sunset";
-
-export interface GlobalSettings {
-  gitUsername: string;
-  gitEmail: string;
-  defaultBranch: string;
-  /** Minutes between background fetches; "0" = manual only */
-  autoFetchInterval: string;
-  terminalShell: string;
-  showHiddenFiles: boolean;
-  enableTelemetry: boolean;
-  accentColor: AccentColor;
-}
-
-export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
-  gitUsername: "",
-  gitEmail: "",
-  defaultBranch: "main",
-  autoFetchInterval: "5",
-  terminalShell: "zsh",
-  showHiddenFiles: false,
-  enableTelemetry: true,
-  accentColor: "default",
-};
+export type { AccentColor, GlobalSettings } from "@/lib/globalSettingsTypes";
+export { DEFAULT_GLOBAL_SETTINGS, autoFetchIntervalMs } from "@/lib/globalSettingsTypes";
 
 const USER_DATA_DIR = path.join(process.cwd(), "User data");
 const SETTINGS_FILE = path.join(USER_DATA_DIR, "global-settings.json");
@@ -56,15 +39,4 @@ export async function saveGlobalSettings(
   await ensureDir();
   await fs.writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
   return merged;
-}
-
-/** Resolved fetch interval in ms; 0 when disabled */
-export function autoFetchIntervalMs(
-  profileAutoFetch: boolean | undefined,
-  intervalMinutes: string
-): number {
-  if (!profileAutoFetch) return 0;
-  const minutes = parseInt(intervalMinutes, 10);
-  if (!minutes || minutes <= 0) return 0;
-  return minutes * 60 * 1000;
 }

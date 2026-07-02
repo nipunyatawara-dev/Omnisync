@@ -30,6 +30,14 @@ const USER_DATA_DIR = path.join(process.cwd(), "User data");
 const PROFILES_FILE = path.join(USER_DATA_DIR, "profiles.json");
 const CONFIG_FILE = path.join(USER_DATA_DIR, "config.json"); // To store active profile
 const OAUTH_FILE = path.join(USER_DATA_DIR, "oauth.json"); // To store OAuth config credentials
+const GITHUB_SESSION_FILE = path.join(USER_DATA_DIR, "github-session.json");
+
+export interface GithubSession {
+  token: string;
+  login?: string;
+  avatarUrl?: string;
+  updatedAt: string;
+}
 
 const ALGORITHM = "aes-256-gcm";
 const LEGACY_ALGORITHM = "aes-256-cbc";
@@ -174,13 +182,19 @@ export async function createProfile(draft: Omit<UserProfile, "id" | "createdAt" 
   const profiles = await getProfiles();
   const id = draft.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") + "-" + Date.now().toString(36);
   const now = new Date().toISOString();
-  
+  const gitToken = draft.gitToken || (await getGithubSession())?.token;
+
   const newProfile: UserProfile = {
     ...draft,
+    gitToken,
     id,
     createdAt: now,
     updatedAt: now,
   };
+
+  if (gitToken) {
+    await saveGithubSession({ token: gitToken, login: draft.name });
+  }
   
   profiles.push(newProfile);
   await saveProfiles(profiles);
@@ -202,6 +216,13 @@ export async function updateProfile(id: string, updates: Partial<UserProfile>): 
     ...allowedUpdates,
     updatedAt: new Date().toISOString(),
   };
+
+  if (updatedProfile.gitToken) {
+    await saveGithubSession({
+      token: updatedProfile.gitToken,
+      login: updatedProfile.name,
+    });
+  }
   
   profiles[index] = updatedProfile;
   await saveProfiles(profiles);
@@ -245,6 +266,15 @@ export async function getActiveProfile(): Promise<UserProfile | null> {
 // Delete profile
 export async function deleteProfile(id: string): Promise<void> {
   const profiles = await getProfiles();
+  const profileToDelete = profiles.find((p) => p.id === id);
+
+  if (profileToDelete?.gitToken) {
+    await saveGithubSession({
+      token: profileToDelete.gitToken,
+      login: profileToDelete.name,
+    });
+  }
+
   const filtered = profiles.filter((p) => p.id !== id);
   await saveProfiles(filtered);
   
@@ -252,6 +282,71 @@ export async function deleteProfile(id: string): Promise<void> {
   if (activeId === id) {
     await setActiveProfileId(filtered[0]?.id || null);
   }
+}
+
+export async function getGithubSession(): Promise<GithubSession | null> {
+  try {
+    await ensureDirs();
+    const data = await fs.readFile(GITHUB_SESSION_FILE, "utf-8");
+    const json = JSON.parse(data) as { token?: string; login?: string; avatarUrl?: string; updatedAt?: string };
+    if (!json.token) {
+      return null;
+    }
+
+    return {
+      token: decrypt(json.token),
+      login: json.login,
+      avatarUrl: json.avatarUrl,
+      updatedAt: json.updatedAt || new Date().toISOString(),
+    };
+  } catch (error: unknown) {
+    const err = error as { code?: string };
+    if (err?.code === "ENOENT") {
+      return null;
+    }
+    console.error("Error reading GitHub session", error);
+    return null;
+  }
+}
+
+export async function saveGithubSession(session: Pick<GithubSession, "token" | "login" | "avatarUrl">): Promise<void> {
+  await ensureDirs();
+  await fs.writeFile(
+    GITHUB_SESSION_FILE,
+    JSON.stringify({
+      token: encrypt(session.token),
+      login: session.login,
+      avatarUrl: session.avatarUrl,
+      updatedAt: new Date().toISOString(),
+    }, null, 2),
+    "utf-8",
+  );
+}
+
+export async function clearGithubSession(): Promise<void> {
+  try {
+    await fs.unlink(GITHUB_SESSION_FILE);
+  } catch (error: unknown) {
+    const err = error as { code?: string };
+    if (err?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+}
+
+export async function hasGithubSession(): Promise<boolean> {
+  const session = await getGithubSession();
+  return !!session?.token;
+}
+
+export async function getGithubToken(): Promise<string | null> {
+  const profile = await getActiveProfile();
+  if (profile?.gitToken) {
+    return profile.gitToken;
+  }
+
+  const session = await getGithubSession();
+  return session?.token || null;
 }
 
 export interface OauthConfig {

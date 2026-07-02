@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
-import { getActiveProfile } from "@/lib/profiles";
+import { getGithubToken } from "@/lib/profiles";
 
 export async function GET() {
   try {
-    const profile = await getActiveProfile();
-    const token = profile?.gitToken;
+    const token = await getGithubToken();
     if (!token) {
       return NextResponse.json({ error: "No GitHub token available" }, { status: 401 });
     }

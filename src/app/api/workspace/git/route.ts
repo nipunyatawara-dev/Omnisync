@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getActiveProfile } from "@/lib/profiles";
+import { getActiveProfile, getGithubToken } from "@/lib/profiles";
 import { getGlobalSettings } from "@/lib/globalSettings";
 import { execFile } from "child_process";
 import {
@@ -183,7 +183,7 @@ export async function POST(request: Request) {
 
   const cwd = profile.workspacePath;
   const global = await getGlobalSettings();
-  const token = profile.gitToken;
+  const token = profile.gitToken || (await getGithubToken()) || undefined;
 
   try {
     const body = await request.json();

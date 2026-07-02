@@ -1,4 +1,4 @@
-import type { AccentColor } from "@/lib/globalSettings";
+import type { AccentColor } from "@/lib/globalSettingsTypes";
 
 const ACCENT_PRESETS: Record<
   AccentColor,

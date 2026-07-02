@@ -5,6 +5,7 @@ import path from "path";
 import { getRunnerLogs } from "@/lib/runner";
 import {
   launchIde,
+  openPath,
   openUrl,
   openXcodeProject,
   runElectronDev,
@@ -79,6 +80,11 @@ export async function POST(request: Request) {
 
   try {
     const { type, port, ide } = await request.json();
+
+    if (type === "folder") {
+      await openPath(cwd);
+      return NextResponse.json({ success: true });
+    }
 
     if (type === "ide") {
       if (!ide || typeof ide !== "string") {

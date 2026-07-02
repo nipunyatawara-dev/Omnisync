@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { saveGithubSession } from "@/lib/profiles";
 
 export async function POST(request: Request) {
   try {
@@ -25,6 +26,12 @@ export async function POST(request: Request) {
     }
 
     const data = await res.json();
+    await saveGithubSession({
+      token,
+      login: data.login,
+      avatarUrl: data.avatar_url || "",
+    });
+
     return NextResponse.json({
       valid: true,
       login: data.login,

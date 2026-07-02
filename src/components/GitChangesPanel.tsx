@@ -5,10 +5,11 @@ import type { GitWorkingFile, MergeState } from "@/lib/git";
 
 interface GitChangesPanelProps {
   branchProtected: boolean;
+  refreshKey?: number;
   onCommitted?: () => void;
 }
 
-export default function GitChangesPanel({ branchProtected, onCommitted }: GitChangesPanelProps) {
+export default function GitChangesPanel({ branchProtected, refreshKey = 0, onCommitted }: GitChangesPanelProps) {
   const [files, setFiles] = useState<GitWorkingFile[]>([]);
   const [mergeState, setMergeState] = useState<MergeState>("none");
   const [commitMessage, setCommitMessage] = useState("");
@@ -32,11 +33,9 @@ export default function GitChangesPanel({ branchProtected, onCommitted }: GitCha
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadWorkingStatus();
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [loadWorkingStatus]);
+    setIsLoading(true);
+    void loadWorkingStatus();
+  }, [loadWorkingStatus, refreshKey]);
 
   const toggleStage = async (file: GitWorkingFile) => {
     setError(null);
@@ -101,6 +100,7 @@ export default function GitChangesPanel({ branchProtected, onCommitted }: GitCha
   };
 
   const stagedCount = files.filter((f) => f.staged).length;
+  const unstagedCount = files.filter((f) => !f.staged).length;
   const hasConflicts = files.some((f) => f.status === "conflicted");
 
   if (isLoading) {
@@ -118,7 +118,13 @@ export default function GitChangesPanel({ branchProtected, onCommitted }: GitCha
           Changes
         </span>
         <span className="badge" style={{ fontSize: "10px" }}>
-          {stagedCount} staged
+          {files.length === 0
+            ? "clean"
+            : stagedCount > 0 && unstagedCount > 0
+              ? `${stagedCount} staged, ${unstagedCount} unstaged`
+              : stagedCount > 0
+                ? `${stagedCount} staged`
+                : `${unstagedCount} unstaged`}
         </span>
       </div>
 

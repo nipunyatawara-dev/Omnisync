@@ -153,7 +153,7 @@ OmniSync is a three-layer desktop app:
 
 ```
 Electron shell (main.js)
-    └── spawns Next.js on localhost:3000
+    └── spawns Next.js on localhost:47821
             └── React dashboard (src/app/)
                     └── API routes (src/app/api/)
                             └── lib helpers (src/lib/)

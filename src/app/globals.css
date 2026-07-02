@@ -205,23 +205,16 @@ input, select, textarea, button {
   font-size: inherit;
 }
 
-/* Scrollbars */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+/* Scrollbars — hidden globally, scroll still works */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
-::-webkit-scrollbar-track {
-  background: var(--color-bg-default);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border-default);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-fg-muted);
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* Custom CSS layout classes */
@@ -383,6 +376,18 @@ input, select, textarea, button {
   font-size: 14px;
   width: 100%;
   line-height: 20px;
+}
+
+select.form-control {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 32px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px;
 }
 
 .form-control:focus {
@@ -1215,7 +1220,8 @@ body.electron-app [role="button"] {
 
 .custom-tooltip {
   position: relative;
-  display: inline-flex;
+  display: inline-block;
+  max-width: 100%;
 }
 
 .custom-tooltip-content {
@@ -2092,6 +2098,11 @@ body.electron-app [role="button"] {
   background: var(--color-success-fg);
 }
 
+@keyframes tourFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 @keyframes fadeInScale {
   0% { opacity: 0; transform: scale(0.95); }
   100% { opacity: 1; transform: scale(1); }
@@ -2199,14 +2210,15 @@ body.electron-app [role="button"] {
 .tour-card {
   z-index: 9995;
   width: 320px;
+  max-width: calc(100vw - 32px);
   background-color: var(--color-bg-overlay);
   border: 1px solid var(--color-border-default);
   border-radius: 10px;
   padding: 18px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
   backdrop-filter: blur(8px);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: fadeInScale 0.2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  transition: top 0.25s cubic-bezier(0.4, 0, 0.2, 1), left 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: tourFadeIn 0.2s ease-out forwards;
 }
 
 .tour-arrow {

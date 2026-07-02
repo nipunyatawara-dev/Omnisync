@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import { resetBrokenEsbuildInstall, npmInstallArgs } from "@/lib/npmInstall";
+import {
+  resetBrokenEsbuildInstall,
+  npmInstallArgs,
+  resolveDependencyInstallArgs,
+  isNativeExecutable,
+  sanitizeNpmInstallLogLine,
+} from "@/lib/npmInstall";
 
 describe("npmInstall", () => {
   let tmpDir: string;
@@ -25,6 +31,15 @@ describe("npmInstall", () => {
     ]);
   });
 
+  it("prefers npm ci when package-lock.json exists", async () => {
+    await fs.writeFile(path.join(tmpDir, "package-lock.json"), "{}", "utf-8");
+    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["ci", "--include=optional"]);
+  });
+
+  it("falls back to npm install without a lockfile", async () => {
+    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["install", "--include=optional"]);
+  });
+
   it("resets esbuild when @esbuild platform packages are missing", async () => {
     const esbuildDir = path.join(tmpDir, "node_modules", "esbuild", "bin");
     await fs.mkdir(esbuildDir, { recursive: true });
@@ -35,17 +50,48 @@ describe("npmInstall", () => {
     expect(await pathExists(path.join(tmpDir, "node_modules", "esbuild"))).toBe(false);
   });
 
-  it("leaves esbuild alone when platform packages exist", async () => {
+  it("leaves esbuild alone when platform packages exist and bin is still a JS stub", async () => {
     const esbuildBin = path.join(tmpDir, "node_modules", "esbuild", "bin", "esbuild");
     const scopeBin = path.join(tmpDir, "node_modules", "@esbuild", "darwin-arm64", "bin", "esbuild");
     await fs.mkdir(path.dirname(esbuildBin), { recursive: true });
     await fs.mkdir(path.dirname(scopeBin), { recursive: true });
-    await fs.writeFile(esbuildBin, "native", "utf-8");
+    await fs.writeFile(esbuildBin, "#!/usr/bin/env node\n", "utf-8");
     await fs.writeFile(scopeBin, "native", "utf-8");
 
     const message = await resetBrokenEsbuildInstall(tmpDir);
     expect(message).toBeNull();
     expect(await pathExists(esbuildBin)).toBe(true);
+  });
+
+  it("resets esbuild when bin is a native binary even if @esbuild exists", async () => {
+    const esbuildBin = path.join(tmpDir, "node_modules", "esbuild", "bin", "esbuild");
+    const scopeBin = path.join(tmpDir, "node_modules", "@esbuild", "darwin-arm64", "bin", "esbuild");
+    await fs.mkdir(path.dirname(esbuildBin), { recursive: true });
+    await fs.mkdir(path.dirname(scopeBin), { recursive: true });
+    await fs.writeFile(esbuildBin, Buffer.from([0xcf, 0xfa, 0xed, 0xfe, 0x00]));
+    await fs.writeFile(scopeBin, "native", "utf-8");
+
+    const message = await resetBrokenEsbuildInstall(tmpDir);
+    expect(message).toContain("stale esbuild binary");
+    expect(await pathExists(path.join(tmpDir, "node_modules", "esbuild"))).toBe(false);
+  });
+
+  it("detects native executables by magic bytes", async () => {
+    const binPath = path.join(tmpDir, "macho");
+    await fs.writeFile(binPath, Buffer.from([0xcf, 0xfa, 0xed, 0xfe]));
+    expect(await isNativeExecutable(binPath)).toBe(true);
+
+    const jsPath = path.join(tmpDir, "js");
+    await fs.writeFile(jsPath, "#!/usr/bin/env node\n", "utf-8");
+    expect(await isNativeExecutable(jsPath)).toBe(false);
+  });
+
+  it("sanitizes npm buffer dump lines from install logs", () => {
+    expect(sanitizeNpmInstallLogLine("npm error Buffer(677) [Uint8Array] [")).toBeNull();
+    expect(sanitizeNpmInstallLogLine("npm error 58, 49, 10, 239, 191, 189,")).toBeNull();
+    expect(
+      sanitizeNpmInstallLogLine("npm error SyntaxError: Invalid or unexpected token")
+    ).toContain("esbuild postinstall failed");
   });
 });
 

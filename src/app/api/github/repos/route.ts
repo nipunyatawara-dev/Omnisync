@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
-import { getActiveProfile } from "@/lib/profiles";
+import { getGithubToken } from "@/lib/profiles";
 
 export async function GET(request: Request) {
   try {
-    // Prefer the server-stored token; fall back to a client-provided token,
-    // which is only used during initial setup before a profile is saved.
-    const profile = await getActiveProfile();
-    let token = profile?.gitToken;
+    let token = await getGithubToken();
     if (!token) {
       const authHeader = request.headers.get("Authorization");
       if (authHeader && authHeader.startsWith("Bearer ")) {

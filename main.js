@@ -53,9 +53,11 @@ function getOrCreateEncryptionSecret() {
   return secret;
 }
 
+const { OMNISYNC_APP_PORT } = require("./appPort");
+
 let nextProcess = null;
 let mainWindow = null;
-const PORT = 3000;
+const PORT = OMNISYNC_APP_PORT;
 const SERVER_URL = `http://localhost:${PORT}`;
 
 // Function to poll the server until it is ready
@@ -86,6 +88,7 @@ function startNextServer() {
     env: {
       ...process.env,
       PORT: PORT.toString(),
+      NEXT_PUBLIC_OMNISYNC_PORT: PORT.toString(),
       OMNISYNC_API_TOKEN: apiToken,
       OMNISYNC_ENCRYPTION_SECRET: encryptionSecret,
     },

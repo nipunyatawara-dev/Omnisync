@@ -37,6 +37,15 @@ export function classifyLogLine(line: string): LogLineTone {
   return "default";
 }
 
+export function terminalLineColor(line: string): string {
+  const tone = classifyLogLine(line);
+  if (tone === "error") return "var(--color-danger-fg)";
+  if (tone === "warn") return "var(--color-attention-fg)";
+  if (tone === "muted") return "#6e7681";
+  if (line.startsWith("> ") && line.includes("%")) return "#8b949e";
+  return "#3fb950";
+}
+
 /** Remove consecutive duplicate lines from npm output. */
 export function dedupeLogs(logs: string[]): string[] {
   return logs.filter((line, i) => i === 0 || line !== logs[i - 1]);

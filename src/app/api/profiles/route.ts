@@ -7,6 +7,9 @@ import {
   setActiveProfileId,
   deleteProfile,
   verifyPassword,
+  getGithubSession,
+  hasGithubSession,
+  saveGithubSession,
   type UserProfile,
 } from "@/lib/profiles";
 
@@ -22,7 +25,19 @@ export async function GET() {
   const profiles = await getProfiles();
   const activeProfileId = await getActiveProfileId();
   const sanitized = profiles.map(sanitizeProfile);
-  return NextResponse.json({ profiles: sanitized, activeProfileId });
+
+  if (!(await getGithubSession())) {
+    const profileWithToken = profiles.find((profile) => profile.gitToken);
+    if (profileWithToken?.gitToken) {
+      await saveGithubSession({
+        token: profileWithToken.gitToken,
+        login: profileWithToken.name,
+      });
+    }
+  }
+
+  const githubConnected = await hasGithubSession();
+  return NextResponse.json({ profiles: sanitized, activeProfileId, githubConnected });
 }
 
 export async function POST(request: Request) {

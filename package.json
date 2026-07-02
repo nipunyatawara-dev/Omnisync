@@ -4,9 +4,9 @@
   "private": true,
   "main": "main.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 47821",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 47821",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",

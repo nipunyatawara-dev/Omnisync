@@ -4,7 +4,12 @@ import { execFile, spawn } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import { resetBrokenEsbuildInstall, npmInstallArgs } from "@/lib/npmInstall";
+import { getCurrentBranch, getRemoteOriginUrl } from "@/lib/git";
+import {
+  resetBrokenEsbuildInstall,
+  resolveDependencyInstallArgs,
+  sanitizeNpmInstallLogLine,
+} from "@/lib/npmInstall";
 
 const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
@@ -116,6 +121,15 @@ export async function GET() {
 
   const folderName = path.basename(cwd);
 
+  let currentBranch: string | null = null;
+  let remoteUrl: string | null = null;
+  if (gitStatus !== "Not a Git repository") {
+    try {
+      currentBranch = await getCurrentBranch(cwd);
+      remoteUrl = await getRemoteOriginUrl(cwd);
+    } catch {}
+  }
+
   return NextResponse.json({
     nodeVersion,
     npmVersion,
@@ -132,6 +146,8 @@ export async function GET() {
     username,
     hostname,
     folderName,
+    currentBranch,
+    remoteUrl,
   });
 }
 
@@ -157,11 +173,11 @@ export async function POST(request: Request) {
       try {
         await fs.rm(nodeModulesPath, { recursive: true, force: true });
       } catch {}
-      args = npmInstallArgs(["install"]);
+      args = await resolveDependencyInstallArgs(cwd);
     } else if (action === "audit-fix") {
       args = ["audit", "fix", "--force"];
     } else if (action === "install") {
-      args = npmInstallArgs(["install"]);
+      args = await resolveDependencyInstallArgs(cwd);
     } else {
       return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
@@ -169,18 +185,25 @@ export async function POST(request: Request) {
     const customStream = new ReadableStream({
       async start(controller) {
         const sendLog = (message: string) => {
-          const clean = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const stripped = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const clean = sanitizeNpmInstallLogLine(stripped);
+          if (clean === null) return;
           controller.enqueue(encoder.encode(JSON.stringify({ type: "log", message: clean }) + "\n"));
         };
 
         const sendError = (message: string) => {
-          const clean = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const stripped = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const clean = sanitizeNpmInstallLogLine(stripped) ?? stripped.trim();
+          if (!clean) return;
           controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: clean }) + "\n"));
         };
 
-        const sendSuccess = () => {
-          controller.enqueue(encoder.encode(JSON.stringify({ type: "success" }) + "\n"));
-          controller.close();
+        const closeStream = () => {
+          try {
+            controller.close();
+          } catch {
+            // Stream already closed.
+          }
         };
 
         sendLog(`> Running maintenance command inside ${cwd}:`);
@@ -229,13 +252,20 @@ export async function POST(request: Request) {
           });
         });
 
+        child.on("error", (err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          sendError(`Failed to start command: ${msg}`);
+          closeStream();
+        });
+
         child.on("close", (code) => {
           if (code !== 0) {
             sendError(`Command failed with exit code ${code}`);
           } else {
             sendLog(`> Command completed successfully.`);
-            sendSuccess();
+            controller.enqueue(encoder.encode(JSON.stringify({ type: "success" }) + "\n"));
           }
+          closeStream();
         });
       }
     });

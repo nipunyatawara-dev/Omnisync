@@ -10,12 +10,14 @@ import DependencyInstallModal, {
   type DependencyInstallModalState,
 } from "@/components/DependencyInstallModal";
 import Loader from "@/components/Loader";
-import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
+import SettingsPageView from "@/components/SettingsPageView";
 import { UserProfile } from "@/lib/profiles";
 import { useGitSync } from "@/hooks/useGitSync";
 import Tooltip from "@/components/Tooltip";
 import ProductTour from "@/components/ProductTour";
 import { RunnerStatus } from "@/lib/runner";
+import { readDiagnosticsNdjsonStream } from "@/lib/diagnosticsStream";
+import { terminalLineColor } from "@/lib/parseInstallLogs";
 
 interface RepoCommit {
   hash: string;
@@ -79,6 +81,7 @@ export default function DashboardPage() {
   const [fileContent, setFileContent] = useState("");
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [isChangingBranch, setIsChangingBranch] = useState(false);
+  const [gitChangesRefreshKey, setGitChangesRefreshKey] = useState(0);
 
   // Runner state
   const [runnerStatus, setRunnerStatus] = useState<RunnerStatus>({ status: "stopped", pid: null });
@@ -88,7 +91,7 @@ export default function DashboardPage() {
   // Diagnostics state
   const [diagData, setDiagData] = useState<DiagnosticDetails | null>(null);
   const [isDiagLoading, setIsDiagLoading] = useState(false);
-  const [actionOutput, setActionOutput] = useState<{ success: boolean; output: string } | null>(null);
+  const [lastCommandExit, setLastCommandExit] = useState<{ success: boolean } | null>(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: "info" | "success" | "error" } | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -160,8 +163,8 @@ export default function DashboardPage() {
 
   const [launchOptions, setLaunchOptions] = useState<string[]>([]);
   const [diagnosticLogs, setDiagnosticLogs] = useState<string[]>([]);
-  const [isLiveTerminalActive, setIsLiveTerminalActive] = useState(false);
-  const liveTerminalEndRef = useRef<HTMLDivElement | null>(null);
+  const terminalScrollRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollTerminalRef = useRef(true);
 
   const [depInstallModal, setDepInstallModal] = useState<DependencyInstallModalState | null>(null);
 
@@ -301,17 +304,20 @@ export default function DashboardPage() {
     }
   };
 
-  const loadDiagnostics = async () => {
-    Promise.resolve().then(() => {
-      setIsDiagLoading(true);
-      setActionOutput(null);
-    });
+  const loadDiagnostics = async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      Promise.resolve().then(() => {
+        setIsDiagLoading(true);
+      });
+    }
     try {
       const res = await fetch("/api/workspace/diagnostics");
       const data = await res.json();
       setDiagData(data as DiagnosticDetails);
     } catch {} finally {
-      setIsDiagLoading(false);
+      if (!opts?.silent) {
+        setIsDiagLoading(false);
+      }
     }
   };
 
@@ -370,45 +376,14 @@ export default function DashboardPage() {
     const res = await fetch("/api/workspace/diagnostics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "install", cleanModules: true }),
+      body: JSON.stringify({ action: "install" }),
     });
 
     if (!res.ok) {
       throw new Error("Install command failed to start");
     }
 
-    const reader = res.body?.getReader();
-    if (!reader) {
-      throw new Error("No install output stream received");
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const data = JSON.parse(line) as { type?: string; message?: string };
-          if (data.type === "error") {
-            throw new Error(data.message || "Install failed");
-          }
-          if (data.type === "log" && data.message) {
-            onLog(data.message);
-          }
-        } catch (err) {
-          if (err instanceof SyntaxError) continue;
-          throw err;
-        }
-      }
-    }
+    await readDiagnosticsNdjsonStream(res, onLog);
   };
 
   const runDependencyInstall = async (missingPackages: string[]) => {
@@ -419,8 +394,12 @@ export default function DashboardPage() {
       missingPackages,
       logs: [`Detected ${count} missing package${count === 1 ? "" : "s"}. Running npm install...`],
     });
-    setIsLiveTerminalActive(true);
-    setDiagnosticLogs([]);
+
+    setDiagnosticLogs((prev) => [
+      ...prev,
+      ...(prev.length > 0 ? [""] : []),
+      `Detected ${count} missing package${count === 1 ? "" : "s"}. Running npm install...`,
+    ]);
 
     const appendLog = (message: string) => {
       setDiagnosticLogs((prev) => [...prev, message]);
@@ -440,6 +419,7 @@ export default function DashboardPage() {
             : prev
       );
       showNotification("Dependencies installed successfully!", "success");
+      setGitChangesRefreshKey((key) => key + 1);
 
       const reloadRes = await fetch("/api/workspace/diagnostics");
       const reloadData = await reloadRes.json();
@@ -452,7 +432,7 @@ export default function DashboardPage() {
       );
       showNotification(`Dependency installation failed: ${errMsg}`, "error");
     } finally {
-      setIsLiveTerminalActive(false);
+      void loadDiagnostics({ silent: true });
     }
   };
 
@@ -688,6 +668,9 @@ export default function DashboardPage() {
         loadDiagnostics();
       });
     }
+    if (activeTab === "git") {
+      setGitChangesRefreshKey((key) => key + 1);
+    }
   }, [activeTab]);
 
   const handleBranchChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -738,19 +721,48 @@ export default function DashboardPage() {
 
 
 
-  // Auto scroll live terminal to bottom
+  const maintenanceCommandLabel: Record<string, string> = {
+    "clean-cache": "npm cache clean --force",
+    "clean-modules": "npm ci --include=optional",
+    "audit-fix": "npm audit fix --force",
+  };
+
+  const appendDiagnosticSessionLine = (line: string) => {
+    setDiagnosticLogs((prev) => [...prev, line]);
+  };
+
+  const handleTerminalScroll = () => {
+    const el = terminalScrollRef.current;
+    if (!el) return;
+    shouldAutoScrollTerminalRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+  };
+
+  // Auto-scroll terminal only when the user is already near the bottom
   useEffect(() => {
-    if (liveTerminalEndRef.current) {
-      liveTerminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (!shouldAutoScrollTerminalRef.current) return;
+    const el = terminalScrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
     }
-  }, [diagnosticLogs]);
+  }, [diagnosticLogs, isActionLoading]);
 
   // Run diagnostics maintenance tasks with live streaming
   const handleMaintenanceAction = async (action: string) => {
+    const prompt = diagData
+      ? `${diagData.username || "user"}@${diagData.hostname || "localhost"} ${diagData.folderName || "workspace"}`
+      : "user@localhost workspace";
+    const commandLabel = maintenanceCommandLabel[action] || action;
+
     setIsActionLoading(true);
-    setIsLiveTerminalActive(true);
-    setActionOutput(null);
-    setDiagnosticLogs([]);
+    setLastCommandExit(null);
+    shouldAutoScrollTerminalRef.current = true;
+
+    setDiagnosticLogs((prev) => [
+      ...prev,
+      ...(prev.length > 0 ? [""] : []),
+      `> ${prompt} % ${commandLabel}`,
+    ]);
 
     try {
       const res = await fetch("/api/workspace/diagnostics", {
@@ -760,44 +772,20 @@ export default function DashboardPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Maintenance action failed");
+        throw new Error("Maintenance action failed to start");
       }
 
-      const reader = res.body?.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      await readDiagnosticsNdjsonStream(res, appendDiagnosticSessionLine);
 
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            try {
-              const data = JSON.parse(line);
-              if (data.type === "log") {
-                setDiagnosticLogs((prev) => [...prev, data.message]);
-              } else if (data.type === "error") {
-                throw new Error(data.message);
-              }
-            } catch {}
-          }
-        }
-      }
-
-      setActionOutput({ success: true, output: "Command completed successfully." });
-      loadDiagnostics();
+      setLastCommandExit({ success: true });
+      setGitChangesRefreshKey((key) => key + 1);
+      void loadDiagnostics({ silent: true });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      setActionOutput({ success: false, output: msg });
+      appendDiagnosticSessionLine(`Error: ${msg}`);
+      setLastCommandExit({ success: false });
     } finally {
       setIsActionLoading(false);
-      setIsLiveTerminalActive(false);
     }
   };
 
@@ -990,7 +978,6 @@ export default function DashboardPage() {
  
           <Tooltip content="Environment Diagnostics" position="right">
             <button
-              id="tour-diagnostics-btn"
               onClick={() => setActiveTab("diagnostics")}
               className={`sidebar-btn ${activeTab === "diagnostics" ? "active" : ""}`}
             >
@@ -1015,7 +1002,7 @@ export default function DashboardPage() {
             </button>
           </Tooltip>
 
-          <Tooltip content="Workspace Settings" position="right">
+          <Tooltip content="Settings" position="right">
             <button
               onClick={() => setActiveTab("settings")}
               className={`sidebar-btn ${activeTab === "settings" ? "active" : ""}`}
@@ -1182,6 +1169,7 @@ export default function DashboardPage() {
                   <div style={{ position: "relative" }}>
                     <Tooltip content="Open codebase in an IDE" position="bottom">
                       <button
+                        id="tour-open-ide"
                         className="btn btn-sm"
                         onClick={() => setIsIdeDropdownOpen(!isIdeDropdownOpen)}
                         style={{
@@ -1262,7 +1250,9 @@ export default function DashboardPage() {
               {/* Three Column View */}
               <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
                 {/* Column 1: Left file tree */}
-                <div style={{
+                <div
+                  id="tour-file-tree"
+                  style={{
                   width: `${leftWidth}px`,
                   backgroundColor: "var(--color-bg-subtle)",
                   overflowY: "auto",
@@ -1307,7 +1297,7 @@ export default function DashboardPage() {
                 />
 
                 {/* Column 2: Code Viewer with Tabs */}
-                <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+                <div id="tour-code-editor" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
                   {/* VS Code Style Tab Bar */}
                   {openFiles.length > 0 && (
                     <div style={{
@@ -1398,7 +1388,9 @@ export default function DashboardPage() {
                 />
 
                 {/* Column 3: Commit Diff history */}
-                <div style={{
+                <div
+                  id="tour-diff-panel"
+                  style={{
                   width: `${rightWidth}px`,
                   overflow: "hidden",
                   flexShrink: 0,
@@ -1417,6 +1409,7 @@ export default function DashboardPage() {
               activeProfile={activeProfile}
               syncStatus={syncStatus}
               branchProtected={branchProtected}
+              changesRefreshKey={gitChangesRefreshKey}
               isGitSyncing={isGitSyncing}
               gitSyncError={gitSyncError}
               pullDiverged={pullDiverged}
@@ -1443,7 +1436,10 @@ export default function DashboardPage() {
 
           {/* TAB 3: DIAGNOSTICS DASHBOARD PANEL */}
           {activeTab === "diagnostics" && (
-            <div className="animate-fade-slide" style={{
+            <div
+              id="tour-diagnostics-panel"
+              className="animate-fade-slide"
+              style={{
               flex: 1,
               padding: "32px",
               overflowY: "auto",
@@ -1612,7 +1608,10 @@ export default function DashboardPage() {
                         flexDirection: "column",
                         overflow: "hidden",
                       }}>
-                        <div style={{
+                        <div
+                          ref={terminalScrollRef}
+                          onScroll={handleTerminalScroll}
+                          style={{
                           flex: 1,
                           fontFamily: "var(--font-mono)",
                           fontSize: "12px",
@@ -1621,69 +1620,73 @@ export default function DashboardPage() {
                           color: "#8b949e",
                           maxHeight: "280px",
                         }}>
-                          {isLiveTerminalActive ? (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
-                                <span style={{ color: "var(--color-fg-muted)" }}>live_terminal_stream.log</span>
-                                <span className="badge badge-warning animate-pulse" style={{ color: "var(--color-attention-fg)", borderColor: "var(--color-attention-border)" }}>Running...</span>
+                          {(() => {
+                            const showDiagnosticsTerminal =
+                              diagnosticLogs.length > 0 || isActionLoading || lastCommandExit !== null;
+                            const showRunnerTerminal =
+                              !showDiagnosticsTerminal &&
+                              (runnerStatus?.status === "running" || runnerStatus?.status === "starting");
+
+                            if (showRunnerTerminal) {
+                              return (
+                                <div>
+                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
+                                    <span style={{ color: "var(--color-fg-muted)" }}>dev_server_stream.log</span>
+                                    <span className="badge badge-success animate-pulse" style={{ color: "var(--color-success-fg)", borderColor: "var(--color-success-border)" }}>
+                                      {runnerStatus?.status === "starting" ? "Starting..." : "Running"}
+                                    </span>
+                                  </div>
+                                  <pre style={{
+                                    margin: 0,
+                                    fontFamily: "var(--font-mono)",
+                                    fontSize: "11px",
+                                    whiteSpace: "pre-wrap",
+                                  }}>
+                                    <div className="mb-xs" style={{ color: "#3fb950" }}>{diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} % npm run dev` : "shockagg@Nipuns-MacBook-Air OmniSync % npm run dev"}</div>
+                                    {runnerLogs.map((log, idx) => (
+                                      <div key={idx} style={{ color: log.includes("[ERROR]") ? "var(--color-danger-fg)" : "#3fb950" }}>{log}</div>
+                                    ))}
+                                  </pre>
+                                </div>
+                              );
+                            }
+
+                            return (
+                              <div>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
+                                  <span style={{ color: "var(--color-fg-muted)" }}>terminal_stream.log</span>
+                                  {isActionLoading ? (
+                                    <span className="badge badge-warning animate-pulse" style={{ color: "var(--color-attention-fg)", borderColor: "var(--color-attention-border)" }}>Running...</span>
+                                  ) : lastCommandExit ? (
+                                    <span className={`badge ${lastCommandExit.success ? "badge-success" : "badge-danger"}`}>
+                                      {lastCommandExit.success ? "Exit Code: 0" : "Exit Code: 1"}
+                                    </span>
+                                  ) : null}
+                                </div>
+                                <pre style={{
+                                  margin: 0,
+                                  fontFamily: "var(--font-mono)",
+                                  fontSize: "11px",
+                                  whiteSpace: "pre-wrap",
+                                }}>
+                                  {diagnosticLogs.length === 0 && !isActionLoading ? (
+                                    <div style={{ color: "#8b949e" }}>
+                                      {diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} %` : "shockagg@Nipuns-MacBook-Air OmniSync %"}
+                                    </div>
+                                  ) : (
+                                    diagnosticLogs.map((log, idx) => (
+                                      <div
+                                        key={`${idx}-${log.slice(0, 24)}`}
+                                        style={{ color: log === "" ? "transparent" : terminalLineColor(log) }}
+                                      >
+                                        {log || "\u00A0"}
+                                      </div>
+                                    ))
+                                  )}
+                                </pre>
                               </div>
-                              <pre style={{
-                                margin: 0,
-                                fontFamily: "var(--font-mono)",
-                                fontSize: "11px",
-                                color: "#3fb950",
-                                whiteSpace: "pre-wrap",
-                              }}>
-                                {diagnosticLogs.map((log, idx) => (
-                                  <div key={idx}>{log}</div>
-                                ))}
-                              </pre>
-                              <div ref={liveTerminalEndRef} />
-                            </div>
-                          ) : (runnerStatus?.status === "running" || runnerStatus?.status === "starting") ? (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
-                                <span style={{ color: "var(--color-fg-muted)" }}>dev_server_stream.log</span>
-                                <span className="badge badge-success animate-pulse" style={{ color: "var(--color-success-fg)", borderColor: "var(--color-success-border)" }}>
-                                  {runnerStatus.status === "starting" ? "Starting..." : "Running"}
-                                </span>
-                              </div>
-                              <pre style={{
-                                margin: 0,
-                                fontFamily: "var(--font-mono)",
-                                fontSize: "11px",
-                                color: "#e6edf3",
-                                whiteSpace: "pre-wrap",
-                              }}>
-                                <div className="mb-xs" style={{ color: "#3fb950" }}>{diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} % npm run dev` : "shockagg@Nipuns-MacBook-Air OmniSync % npm run dev"}</div>
-                                {runnerLogs.map((log, idx) => (
-                                  <div key={idx} style={{ color: log.includes("[ERROR]") ? "var(--color-danger-fg)" : "#8b949e" }}>{log}</div>
-                                ))}
-                              </pre>
-                            </div>
-                          ) : actionOutput ? (
-                            <div>
-                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)", paddingBottom: "6px", marginBottom: "10px", fontSize: "11px" }}>
-                                <span style={{ color: "var(--color-fg-muted)" }}>terminal_stream.log</span>
-                                <span className={`badge ${actionOutput.success ? "badge-success" : "badge-danger"}`}>
-                                  {actionOutput.success ? "Exit Code: 0" : "Exit Code: 1"}
-                                </span>
-                              </div>
-                              <pre style={{
-                                margin: 0,
-                                fontFamily: "var(--font-mono)",
-                                fontSize: "11px",
-                                color: actionOutput.success ? "#e6edf3" : "var(--color-danger-fg)",
-                                whiteSpace: "pre-wrap",
-                              }}>
-                                {actionOutput.output}
-                              </pre>
-                            </div>
-                          ) : (
-                            <div style={{ fontFamily: "var(--font-mono)", fontSize: "11px", color: "#8b949e", textAlign: "left" }}>
-                              <div>{diagData ? `${diagData.username || "shockagg"}@${diagData.hostname || "Nipuns-MacBook-Air"} ${diagData.folderName || "OmniSync"} %` : "shockagg@Nipuns-MacBook-Air OmniSync %"}</div>
-                            </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -1718,7 +1721,10 @@ export default function DashboardPage() {
 
           {/* TAB 5: COMMIT HISTORY TIMELINE CALENDAR PANEL */}
           {activeTab === "timeline" && (
-            <div className="animate-fade-slide" style={{
+            <div
+              id="tour-timeline-panel"
+              className="animate-fade-slide"
+              style={{
               flex: 1,
               padding: "32px",
               overflowY: "auto",
@@ -1821,7 +1827,7 @@ export default function DashboardPage() {
                         onClick={() => setIsYearlyCalendarExpanded(!isYearlyCalendarExpanded)}
                         style={{ fontSize: "11px", padding: "4px 10px" }}
                       >
-                        {isYearlyCalendarExpanded ? "Hide Calendar ▴" : "Show Calendar ▾"}
+                        {isYearlyCalendarExpanded ? "Hide Calendar" : "Show Calendar"}
                       </button>
                     </div>
 
@@ -1990,7 +1996,7 @@ export default function DashboardPage() {
                             }}
                             style={{ fontSize: "11px", padding: "4px 10px" }}
                           >
-                            Repo Start ⇤
+                            Repo Start
                           </button>
                         </Tooltip>
 
@@ -2189,9 +2195,11 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* TAB 4: WORKSPACE SETTINGS PANEL */}
+          {/* TAB 4: SETTINGS PANEL */}
           {activeTab === "settings" && (
-            <WorkspaceSettingsView
+            <div id="tour-settings-panel" style={{ flex: 1, height: "100%", overflow: "hidden" }}>
+            <SettingsPageView
+              mode="embedded"
               activeProfile={activeProfile}
               onProfileUpdated={(updatedProfile) => {
                 const commandChanged =
@@ -2213,6 +2221,7 @@ export default function DashboardPage() {
                 }
               }}
             />
+            </div>
           )}
         </main>
       </div>

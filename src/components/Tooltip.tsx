@@ -12,7 +12,7 @@ export default function Tooltip({ content, position = "top", children }: Tooltip
   if (!content) return <>{children}</>;
 
   return (
-    <div className="custom-tooltip" style={{ display: "inline-flex", position: "relative" }}>
+    <div className="custom-tooltip">
       {children}
       <div className={`custom-tooltip-content position-${position}`}>
         {content}

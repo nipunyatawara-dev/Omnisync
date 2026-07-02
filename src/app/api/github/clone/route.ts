@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
-import { getActiveProfile } from "@/lib/profiles";
+import { getActiveProfile, getGithubToken } from "@/lib/profiles";
 
 export async function POST(request: Request) {
   try {
@@ -11,7 +11,7 @@ export async function POST(request: Request) {
     // Prefer the server-stored token; fall back to a client-provided token,
     // which is only used during initial setup before a profile is saved.
     const profile = await getActiveProfile();
-    const token = profile?.gitToken || bodyToken;
+    const token = profile?.gitToken || bodyToken || (await getGithubToken());
 
     if (!cloneUrl || !localPath || !token) {
       return NextResponse.json({ error: "Missing required parameters: cloneUrl, localPath, or token" }, { status: 400 });

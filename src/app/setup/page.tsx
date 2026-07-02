@@ -2,9 +2,8 @@
 
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter as useAppRouter } from "next/navigation";
-import { applyAccentTheme } from "@/lib/accentTheme";
-import type { AccentColor } from "@/lib/globalSettings";
 import { UserProfile } from "@/lib/profiles";
+import { OMNISYNC_APP_ORIGIN } from "@/lib/appPort";
 import RepoVisibilityIcon from "@/components/RepoVisibilityIcon";
 import GitHubConnectModal from "@/components/GitHubConnectModal";
 import GitHubConnectedBadge from "@/components/GitHubConnectedBadge";
@@ -43,101 +42,9 @@ export default function SetupPage() {
   const [gitToken, setGitToken] = useState("");
   const [githubConnected, setGithubConnected] = useState(false);
 
-  // Settings & App Documentation Modal State
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<"global-settings" | "git-config" | "app-docs" | "tour-cache">("global-settings");
-
-  // Global Settings States
-  const [globalGitUsername, setGlobalGitUsername] = useState("");
-  const [globalGitEmail, setGlobalGitEmail] = useState("");
-  const [defaultBranch, setDefaultBranch] = useState("main");
-  const [autoFetchInterval, setAutoFetchInterval] = useState("5");
-  const [terminalShell, setTerminalShell] = useState("zsh");
-  const [showHiddenFiles, setShowHiddenFiles] = useState(false);
-  const [accentColor, setAccentColor] = useState("default");
-
-  // Load from server (fallback to localStorage for legacy installs)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    async function loadSettings() {
-      try {
-        const res = await fetch("/api/settings");
-        if (res.ok) {
-          const data = await res.json();
-          const s = data.settings;
-          if (s) {
-            setGlobalGitUsername(s.gitUsername || "");
-            setGlobalGitEmail(s.gitEmail || "");
-            setDefaultBranch(s.defaultBranch || "main");
-            setAutoFetchInterval(s.autoFetchInterval || "5");
-            setTerminalShell(s.terminalShell || "zsh");
-            setShowHiddenFiles(!!s.showHiddenFiles);
-            setAccentColor(s.accentColor || "default");
-            applyAccentTheme((s.accentColor || "default") as AccentColor);
-            return;
-          }
-        }
-      } catch {}
-
-      setGlobalGitUsername(localStorage.getItem("omnisync_global_git_username") || "");
-      setGlobalGitEmail(localStorage.getItem("omnisync_global_git_email") || "");
-      setDefaultBranch(localStorage.getItem("omnisync_global_default_branch") || "main");
-      setAutoFetchInterval(localStorage.getItem("omnisync_global_auto_fetch_interval") || "5");
-      setTerminalShell(localStorage.getItem("omnisync_global_terminal_shell") || "zsh");
-      setShowHiddenFiles(localStorage.getItem("omnisync_global_show_hidden") === "true");
-      const cachedAccent = (localStorage.getItem("omnisync_global_accent") || "default") as AccentColor;
-      setAccentColor(cachedAccent);
-      applyAccentTheme(cachedAccent);
-    }
-
-    loadSettings();
-  }, []);
-
-  // Save settings handler
-  const handleSaveGlobalSettings = async () => {
-    if (typeof window === "undefined") return;
-
-    const payload = {
-      gitUsername: globalGitUsername,
-      gitEmail: globalGitEmail,
-      defaultBranch,
-      autoFetchInterval,
-      terminalShell,
-      showHiddenFiles,
-      enableTelemetry: false,
-      accentColor,
-    };
-
-    try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        alert(data.error || "Failed to save settings.");
-        return;
-      }
-    } catch {
-      alert("Failed to save settings.");
-      return;
-    }
-
-    localStorage.setItem("omnisync_global_git_username", globalGitUsername);
-    localStorage.setItem("omnisync_global_git_email", globalGitEmail);
-    localStorage.setItem("omnisync_global_default_branch", defaultBranch);
-    localStorage.setItem("omnisync_global_auto_fetch_interval", autoFetchInterval);
-    localStorage.setItem("omnisync_global_terminal_shell", terminalShell);
-    localStorage.setItem("omnisync_global_show_hidden", String(showHiddenFiles));
-    localStorage.setItem("omnisync_global_accent", accentColor);
-    applyAccentTheme(accentColor as AccentColor);
-    alert("Global settings saved successfully!");
-  };
-
   const handleLogout = async () => {
     try {
+      await fetch("/api/github/session", { method: "DELETE" });
       await fetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -639,18 +546,15 @@ export default function SetupPage() {
       const profiles = data.profiles || [];
       setProfilesList(profiles);
 
-      // Restore GitHub connection state from existing profiles. The token stays
-      // server-side; the client only learns that a token exists.
+      // Restore GitHub connection state from existing profiles or the app session.
       const profileWithToken = profiles.find((p: UserProfile) => p.hasGitToken);
-      if (profileWithToken) {
+      if (profileWithToken || data.githubConnected) {
         setGithubConnected(true);
-        setGitUsername(profileWithToken.name);
+        setGitUsername(profileWithToken?.name || "");
         fetchGithubUserDetail();
       }
 
-      if (profiles.length > 0) {
-        setStep("profile-selection");
-      } else if (data.activeProfileId) {
+      if (profiles.length > 0 || data.githubConnected) {
         setStep("profile-selection");
       }
     } catch {}
@@ -679,7 +583,17 @@ export default function SetupPage() {
         console.error("sessionStorage read error:", e);
       }
       if (token && username) {
-        Promise.resolve().then(() => {
+        Promise.resolve().then(async () => {
+          try {
+            await fetch("/api/github/session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ token, login: username, avatarUrl }),
+            });
+          } catch (e) {
+            console.error("Failed to persist GitHub session", e);
+          }
+
           setGitUsername(username);
           setGitToken(token);
           setGithubConnected(true);
@@ -929,7 +843,7 @@ export default function SetupPage() {
               
               <button
                 className="btn btn-sm"
-                onClick={() => setIsSettingsOpen(true)}
+                onClick={() => router.push("/settings?return=/setup")}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -937,7 +851,7 @@ export default function SetupPage() {
                 }}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>settings</span>
-                Main Settings
+                Settings
               </button>
 
               <button
@@ -1085,8 +999,8 @@ export default function SetupPage() {
                       2. Set the following fields in GitHub:
                       <div className="mt-xs pl-sm border-l-2 border-outline-variant flex flex-col gap-xs font-mono text-[11px] bg-background/50 p-xs rounded">
                         <div>Application Name: <span className="text-on-surface">OmniSync (Local)</span></div>
-                        <div>Homepage URL: <span className="text-on-surface">{typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}</span></div>
-                        <div>Authorization Callback URL: <span className="text-on-surface">{typeof window !== "undefined" ? window.location.origin : "http://localhost:3000"}/api/auth/callback/github</span></div>
+                        <div>Homepage URL: <span className="text-on-surface">{typeof window !== "undefined" ? window.location.origin : OMNISYNC_APP_ORIGIN}</span></div>
+                        <div>Authorization Callback URL: <span className="text-on-surface">{typeof window !== "undefined" ? window.location.origin : OMNISYNC_APP_ORIGIN}/api/auth/callback/github</span></div>
                       </div>
                     </div>
                     <div>
@@ -1584,371 +1498,6 @@ export default function SetupPage() {
           </div>
         </div>
       </div>
-
-      {/* Main Settings & Documentation Modal */}
-      {isSettingsOpen && (
-        <div style={{
-          position: "fixed",
-          inset: 0,
-          backgroundColor: "rgba(10, 12, 16, 0.85)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          zIndex: 9999,
-          backdropFilter: "blur(4px)",
-        }}>
-          <div className="card animate-fade-slide" style={{
-            width: "90%",
-            maxWidth: "680px",
-            height: "80vh",
-            backgroundColor: "var(--color-bg-overlay)",
-            border: "1px solid var(--color-border-default)",
-            borderRadius: "12px",
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            boxShadow: "0 20px 40px rgba(0, 0, 0, 0.6)",
-          }}>
-            {/* Modal Header */}
-            <div style={{
-              padding: "16px 20px",
-              borderBottom: "1px solid var(--color-border-default)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              backgroundColor: "var(--color-bg-subtle)",
-            }}>
-              <div>
-                <h3 style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#ffffff" }}>
-                  Main Settings &amp; Documentation
-                </h3>
-                <p style={{ fontSize: "11px", color: "var(--color-fg-muted)", margin: "2px 0 0 0" }}>
-                  Learn how to use OmniSync and configure preferences.
-                </p>
-              </div>
-              <button
-                className="btn btn-sm"
-                onClick={() => setIsSettingsOpen(false)}
-                style={{ minWidth: "32px", height: "32px", padding: 0, borderRadius: "50%", display: "flex", alignItems: "center", justifyItems: "center", justifyContent: "center" }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Modal Navigation & Content Layout (Sidebar style) */}
-            <div style={{
-              display: "flex",
-              flex: 1,
-              overflow: "hidden",
-            }}>
-              {/* Left Sidebar */}
-              <div style={{
-                width: "180px",
-                borderRight: "1px solid var(--color-border-default)",
-                backgroundColor: "var(--color-bg-default)",
-                display: "flex",
-                flexDirection: "column",
-                padding: "12px",
-                gap: "6px",
-                flexShrink: 0,
-              }}>
-                {[
-                  { id: "global-settings", label: "Global Preferences" },
-                  { id: "git-config", label: "Git Configuration" },
-                  { id: "app-docs", label: "App Documentation" },
-                  { id: "tour-cache", label: "Reset Preferences" },
-                ].map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setSettingsTab(tab.id as any)}
-                    style={{
-                      padding: "8px 12px",
-                      borderRadius: "6px",
-                      background: settingsTab === tab.id ? "var(--color-bg-active)" : "none",
-                      border: "none",
-                      color: settingsTab === tab.id ? "var(--color-fg-default)" : "var(--color-fg-muted)",
-                      fontWeight: settingsTab === tab.id ? 600 : 500,
-                      fontSize: "12px",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      width: "100%",
-                      transition: "background 0.2s",
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Right Content Area */}
-              <div style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: "20px",
-                backgroundColor: "var(--color-bg-overlay)",
-                display: "flex",
-                flexDirection: "column",
-                gap: "20px",
-              }}>
-                {settingsTab === "global-settings" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
-                      System Preferences
-                    </h3>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Active Terminal Shell
-                      </label>
-                      <select
-                        value={terminalShell}
-                        onChange={(e) => setTerminalShell(e.target.value)}
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      >
-                        <option value="zsh">zsh (macOS Default)</option>
-                        <option value="bash">bash</option>
-                        <option value="sh">sh</option>
-                      </select>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Theme Accent Color
-                      </label>
-                      <select
-                        value={accentColor}
-                        onChange={(e) => setAccentColor(e.target.value)}
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      >
-                        <option value="default">Default Steel Blue</option>
-                        <option value="emerald">Emerald Green</option>
-                        <option value="royal">Royal Purple</option>
-                        <option value="sunset">Sunset Orange</option>
-                      </select>
-                    </div>
-
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "8px" }}>
-                      <div>
-                        <div style={{ fontSize: "12px", fontWeight: 600 }}>Show Hidden Files</div>
-                        <div style={{ fontSize: "10px", color: "var(--color-fg-muted)" }}>Toggle visibility of files starting with dots (e.g. .env, .gitignore)</div>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={showHiddenFiles}
-                        onChange={(e) => setShowHiddenFiles(e.target.checked)}
-                        style={{ cursor: "pointer", width: "16px", height: "16px" }}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      onClick={handleSaveGlobalSettings}
-                      style={{ marginTop: "12px", alignSelf: "flex-end" }}
-                    >
-                      Save Preferences
-                    </button>
-                  </div>
-                )}
-
-                {settingsTab === "git-config" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
-                      Global Git Configuration
-                    </h3>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Git Author Username
-                      </label>
-                      <input
-                        type="text"
-                        value={globalGitUsername}
-                        onChange={(e) => setGlobalGitUsername(e.target.value)}
-                        placeholder="e.g. John Doe"
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      />
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Git Author Email
-                      </label>
-                      <input
-                        type="email"
-                        value={globalGitEmail}
-                        onChange={(e) => setGlobalGitEmail(e.target.value)}
-                        placeholder="e.g. johndoe@example.com"
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      />
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Default Branch Name
-                      </label>
-                      <input
-                        type="text"
-                        value={defaultBranch}
-                        onChange={(e) => setDefaultBranch(e.target.value)}
-                        placeholder="e.g. main"
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px 10px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      />
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                      <label style={{ fontSize: "11px", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-                        Auto-Fetch Frequency
-                      </label>
-                      <select
-                        value={autoFetchInterval}
-                        onChange={(e) => setAutoFetchInterval(e.target.value)}
-                        className="form-control"
-                        style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "6px", backgroundColor: "var(--color-bg-default)", border: "1px solid var(--color-border-default)", color: "var(--color-fg-default)" }}
-                      >
-                        <option value="0">Never (Manual Sync)</option>
-                        <option value="1">Every 1 minute</option>
-                        <option value="5">Every 5 minutes</option>
-                        <option value="15">Every 15 minutes</option>
-                      </select>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-primary"
-                      onClick={handleSaveGlobalSettings}
-                      style={{ marginTop: "12px", alignSelf: "flex-end" }}
-                    >
-                      Save Git Configuration
-                    </button>
-                  </div>
-                )}
-
-                {settingsTab === "app-docs" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
-                      OmniSync Developer Manual
-                    </h3>
-
-                    <div>
-                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
-                        Repository Setup &amp; Workspaces
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
-                        OmniSync enables you to map local repositories or clone from remote GitHub accounts. Once set up, the application scans the workspace directory for your package configurations, dev dependencies, and runtime script command details.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
-                        Live Diagnostics Engine
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
-                        Check node engine limitations and verify package compiler builds. The diagnostics engine runs automated diagnostic scans to detect missing packages or incompatible runtimes and provides safe recovery repairs.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
-                        Three-Pane Visual Merge Resolver
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
-                        When merge conflicts arise, OmniSync provides an interactive three-pane dashboard. It renders the Current Change (Ours) on the left, the Incoming Change (Theirs) on the right, and the Resulting Code in the center. Click block accept buttons to resolve segments quickly.
-                      </p>
-                    </div>
-
-                    <div>
-                      <h4 style={{ fontSize: "13px", fontWeight: 600, margin: "0 0 4px 0", color: "#ffffff" }}>
-                        Git Branch Node Synchronization
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0, lineHeight: "1.6" }}>
-                        Toggle branch nodes on-the-fly and execute repository fetches. OmniSync calculates upstream diffs (commits ahead and behind) to help you keep local files perfectly synchronized with your remotes.
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {settingsTab === "tour-cache" && (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-                    <h3 style={{ fontSize: "14px", fontWeight: 700, color: "var(--color-accent-fg)", margin: 0 }}>
-                      Reset Onboarding &amp; Tour
-                    </h3>
-
-                    <div className="card" style={{ padding: "16px", backgroundColor: "rgba(22,27,34,0.4)", display: "flex", flexDirection: "column", gap: "12px", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
-                      <h4 style={{ fontSize: "13px", fontWeight: 700, margin: 0, color: "#ffffff" }}>
-                        Onboarding Preferences
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-muted)", margin: 0 }}>
-                        Reset guided onboarding tours and animations to play on the next workspace entry.
-                      </p>
-
-                      <div style={{ display: "flex", gap: "12px", marginTop: "8px" }}>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => {
-                            localStorage.removeItem("omnisync_global_tour_shown");
-                            localStorage.removeItem("omnisync_tour_completed");
-                            alert("Guided tour has been reset! It will automatically start upon launching your next workspace.");
-                          }}
-                        >
-                          Reset Product Tour
-                        </button>
-
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => {
-                            sessionStorage.removeItem("omnisync_splash_shown");
-                            alert("First launch animation has been reset! It will play on your next app refresh.");
-                          }}
-                        >
-                          Reset Splash Screen
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="card" style={{ padding: "16px", backgroundColor: "rgba(22,27,34,0.4)", borderRadius: "8px", border: "1px solid var(--color-border-default)" }}>
-                      <h4 style={{ fontSize: "13px", fontWeight: 700, margin: "0 0 8px 0", color: "#ffffff" }}>
-                        Active Theme
-                      </h4>
-                      <p style={{ fontSize: "12px", color: "var(--color-fg-default)", margin: 0 }}>
-                        System theme is set to <strong>GitHub Dark Mode (Default)</strong>. To change theme configuration, link a light mode workspace profile.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div style={{
-              padding: "12px 20px",
-              borderTop: "1px solid var(--color-border-default)",
-              display: "flex",
-              justifyContent: "flex-end",
-              backgroundColor: "var(--color-bg-subtle)",
-              flexShrink: 0,
-            }}>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => setIsSettingsOpen(false)}
-                style={{ width: "80px" }}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
 
       {isOAuthModalOpen && oauthState !== "idle" && (
         <GitHubConnectModal

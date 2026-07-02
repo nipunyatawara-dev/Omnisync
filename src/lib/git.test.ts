@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isProtectedBranch, isDirectCommitBlocked, parseConflictFile } from "@/lib/git";
+import { isProtectedBranch, isDirectCommitBlocked, parseConflictFile, parseGitPorcelainLine } from "@/lib/git";
 import type { UserProfile } from "@/lib/profiles";
 import { promises as fs } from "fs";
 import path from "path";
@@ -22,6 +22,24 @@ describe("git branch protection", () => {
     expect(isDirectCommitBlocked(profile, "production")).toBe(true);
     expect(isDirectCommitBlocked(profile, "feature/foo")).toBe(false);
     expect(isDirectCommitBlocked({ branchProtection: false } as UserProfile, "main")).toBe(false);
+  });
+});
+
+describe("parseGitPorcelainLine", () => {
+  it("marks unstaged modifications correctly", () => {
+    expect(parseGitPorcelainLine(" M package-lock.json")).toEqual({
+      path: "package-lock.json",
+      status: "modified",
+      staged: false,
+    });
+  });
+
+  it("marks staged modifications correctly", () => {
+    expect(parseGitPorcelainLine("M  package-lock.json")).toEqual({
+      path: "package-lock.json",
+      status: "modified",
+      staged: true,
+    });
   });
 });
 
