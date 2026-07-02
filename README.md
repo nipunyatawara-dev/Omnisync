@@ -5,8 +5,8 @@
 # OmniSync
 
 [![Version](https://img.shields.io/badge/version-0.1b-blue)](https://github.com/nipunyatawara-dev/Omnisync)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)](https://github.com/nipunyatawara-dev/Omnisync)
-[![Stack](https://img.shields.io/badge/stack-Electron%20%2B%20Next.js-black)](https://github.com/nipunyatawara-dev/Omnisync)
+[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://github.com/nipunyatawara-dev/Omnisync)
+[![Stack](https://img.shields.io/badge/stack-Electron%20%2B%20Next.js-green)](https://github.com/nipunyatawara-dev/Omnisync)
 
 ---
 
