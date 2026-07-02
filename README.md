@@ -189,6 +189,6 @@ Please keep changes focused and match the existing code style.
 ---
 
 
-> **Cursor Composer 2.5 Flash** and **Gemini Flash 3.5** models were used for development support. 
+> **Cursor Composer 2.5 Flash** and **Gemini 3.5 Flash** models were used for development support. 
 > 
 > This is a **Beta software** . Feedback and bug reports are welcome via [GitHub Issues](https://github.com/nipunyatawara-dev/Omnisync/issues).
