@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
-import { execFile, spawn } from "child_process";
+import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
@@ -10,6 +10,7 @@ import {
   resolveDependencyInstallArgs,
   sanitizeNpmInstallLogLine,
 } from "@/lib/npmInstall";
+import { augmentProcessEnv, spawnTool } from "@/lib/shellEnv";
 
 const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
@@ -36,7 +37,7 @@ export async function GET() {
   let npmVersion = "unknown";
   try {
     npmVersion = await new Promise<string>((resolve) => {
-      execFile(npmCmd, ["-v"], { encoding: "utf-8", timeout: 10000 }, (err, stdout) => {
+      execFile(npmCmd, ["-v"], { encoding: "utf-8", timeout: 10000, env: augmentProcessEnv() }, (err, stdout) => {
         resolve(err ? "unknown" : stdout.trim());
       });
     });
@@ -94,7 +95,7 @@ export async function GET() {
   let gitStatus = "Clean";
   try {
     const gitOut = await new Promise<string>((resolve, reject) => {
-      execFile("git", ["status", "--porcelain"], { cwd, encoding: "utf-8", timeout: 15000 }, (err, stdout) => {
+      execFile("git", ["status", "--porcelain"], { cwd, encoding: "utf-8", timeout: 15000, env: augmentProcessEnv() }, (err, stdout) => {
         if (err) reject(err);
         else resolve(stdout.trim());
       });
@@ -232,7 +233,7 @@ export async function POST(request: Request) {
           }
         }
 
-        const child = spawn(cmd, args, { cwd, shell: isWin });
+        const child = spawnTool(cmd, args, { cwd });
 
         child.stdout?.on("data", (data) => {
           const lines = data.toString().split("\n");
@@ -254,7 +255,13 @@ export async function POST(request: Request) {
 
         child.on("error", (err) => {
           const msg = err instanceof Error ? err.message : String(err);
-          sendError(`Failed to start command: ${msg}`);
+          if (msg.includes("ENOENT") && cmd === "npm") {
+            sendError(
+              "npm was not found. Install Node.js (https://nodejs.org) or ensure npm is on your PATH in Terminal, then retry."
+            );
+          } else {
+            sendError(`Failed to start command: ${msg}`);
+          }
           closeStream();
         });
 

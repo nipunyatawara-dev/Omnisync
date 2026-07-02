@@ -1,10 +1,11 @@
 /* eslint-disable */
-const { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, session, safeStorage } = require("electron");
+const { app, BrowserWindow, shell, ipcMain, dialog, nativeImage, session, safeStorage, utilityProcess } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const { augmentProcessEnv } = require("./shellEnv");
 
 // Generate a cryptographically secure random token on startup
 const apiToken = crypto.randomBytes(32).toString("hex");
@@ -109,7 +110,7 @@ function startNextServer() {
 
   console.log(`Starting Next.js server in ${isDev ? "development" : "production"} mode...`);
 
-  const sharedEnv = {
+  const sharedEnv = augmentProcessEnv({
     ...process.env,
     PORT: PORT.toString(),
     HOSTNAME: "127.0.0.1",
@@ -117,7 +118,7 @@ function startNextServer() {
     OMNISYNC_API_TOKEN: apiToken,
     OMNISYNC_ENCRYPTION_SECRET: encryptionSecret,
     OMNISYNC_USER_DATA_DIR: userDataDir,
-  };
+  });
 
   if (isDev) {
     const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
@@ -129,30 +130,46 @@ function startNextServer() {
   } else {
     const standaloneDir = getStandaloneDir();
     const serverScript = path.join(standaloneDir, "server.js");
-    nextProcess = spawn(process.execPath, [serverScript], {
-      cwd: standaloneDir,
-      env: {
-        ...sharedEnv,
-        ELECTRON_RUN_AS_NODE: "1",
-      },
-    });
+
+    if (process.platform === "darwin") {
+      nextProcess = utilityProcess.fork(serverScript, [], {
+        cwd: standaloneDir,
+        env: sharedEnv,
+        serviceName: "OmniSync Server",
+        stdio: "pipe",
+      });
+    } else {
+      nextProcess = spawn(process.execPath, [serverScript], {
+        cwd: standaloneDir,
+        env: {
+          ...sharedEnv,
+          ELECTRON_RUN_AS_NODE: "1",
+        },
+      });
+    }
   }
 
-  nextProcess.on("error", (err) => {
+  attachNextProcessLogs(nextProcess);
+}
+
+function attachNextProcessLogs(processRef) {
+  if (!processRef) return;
+
+  processRef.on("error", (err) => {
     console.error("Failed to start Next.js server:", err);
   });
 
-  nextProcess.on("exit", (code, signal) => {
+  processRef.on("exit", (code, signal) => {
     if (code !== 0 && code !== null) {
       console.error(`Next.js server exited with code=${code} signal=${signal}`);
     }
   });
 
-  nextProcess.stdout.on("data", (data) => {
+  processRef.stdout?.on("data", (data) => {
     console.log(`[Next.js] ${data.toString().trim()}`);
   });
 
-  nextProcess.stderr.on("data", (data) => {
+  processRef.stderr?.on("data", (data) => {
     console.error(`[Next.js Error] ${data.toString().trim()}`);
   });
 }

@@ -2131,22 +2131,11 @@ body.electron-app [role="button"] {
   pointer-events: none;
 }
 
-.splash-logo-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 96px;
-  height: 96px;
-  margin-bottom: 24px;
-  animation: pulseGlow 2.5s infinite ease-in-out;
-}
-
 .splash-icon {
-  width: 72px;
-  height: 72px;
+  width: 120px;
+  height: 120px;
   object-fit: contain;
-  border-radius: 18px;
-  box-shadow: 0 8px 32px rgba(56, 139, 253, 0.25);
+  margin-bottom: 24px;
 }
 
 .splash-title {

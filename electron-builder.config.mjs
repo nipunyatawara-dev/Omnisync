@@ -12,6 +12,7 @@ export default {
     "main.js",
     "preload.js",
     "appPort.js",
+    "shellEnv.js",
     "package.json",
     "public/**/*",
     ".next/standalone/**/*",

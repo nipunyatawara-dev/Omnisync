@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { getActiveProfile, getGithubToken } from "@/lib/profiles";
+import { spawnTool } from "@/lib/shellEnv";
 
 export async function POST(request: Request) {
   try {
@@ -73,9 +73,9 @@ export async function POST(request: Request) {
         sendLog(`> git clone --progress "${cloneUrl.replace(token, "******")}" "${localPath}"`);
 
         // Spawn git clone process with progress enabled
-        const gitProcess = spawn("git", ["clone", "--progress", authenticatedUrl, localPath]);
+        const gitProcess = spawnTool("git", ["clone", "--progress", authenticatedUrl, localPath]);
 
-        gitProcess.stdout.on("data", (data) => {
+        gitProcess.stdout?.on("data", (data) => {
           const lines = data.toString().split("\n");
           lines.forEach((line: string) => {
             if (line.trim()) {
@@ -84,7 +84,7 @@ export async function POST(request: Request) {
           });
         });
 
-        gitProcess.stderr.on("data", (data) => {
+        gitProcess.stderr?.on("data", (data) => {
           const lines = data.toString().split("\n");
           lines.forEach((line: string) => {
             if (line.trim()) {
@@ -105,7 +105,9 @@ export async function POST(request: Request) {
 
           // Set origin URL back to clean URL to scrub token
           const cleanUrl = cloneUrl.endsWith(".git") ? cloneUrl : `${cloneUrl}.git`;
-          const scrubProcess = spawn("git", ["remote", "set-url", "origin", cleanUrl], { cwd: localPath });
+          const scrubProcess = spawnTool("git", ["remote", "set-url", "origin", cleanUrl], {
+            cwd: localPath,
+          });
 
           scrubProcess.on("close", (scrubCode) => {
             if (scrubCode !== 0) {

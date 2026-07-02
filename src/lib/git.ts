@@ -2,6 +2,7 @@ import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import type { UserProfile } from "@/lib/profiles";
+import { augmentProcessEnv } from "@/lib/shellEnv";
 
 const DEFAULT_PROTECTED_BRANCHES = new Set(["main", "master"]);
 
@@ -59,7 +60,7 @@ function execGit(args: string[], cwd: string, token?: string): Promise<void> {
     execFile(
       "git",
       gitArgs,
-      { cwd, encoding: "utf-8", timeout: 120000 },
+      { cwd, encoding: "utf-8", timeout: 120000, env: augmentProcessEnv() },
       (error, _stdout, stderr) => {
         if (error) {
           const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();
@@ -235,7 +236,7 @@ function runGit(args: string[], cwd: string): Promise<string> {
     execFile(
       "git",
       args,
-      { cwd, encoding: "utf-8", timeout: 20000, maxBuffer: 32 * 1024 * 1024 },
+      { cwd, encoding: "utf-8", timeout: 20000, maxBuffer: 32 * 1024 * 1024, env: augmentProcessEnv() },
       (error, stdout, stderr) => {
         if (error) {
           const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();

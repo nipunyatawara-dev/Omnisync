@@ -35,15 +35,13 @@ export default function FirstLaunchSplash() {
 
   return (
     <div className={`splash-overlay ${fadeOut ? "fade-out" : ""}`}>
-      <div className="splash-logo-container">
-        <img
-          src="/icon.png"
-          alt="OmniSync"
-          className="splash-icon"
-          width={72}
-          height={72}
-        />
-      </div>
+      <img
+        src="/icon.png"
+        alt="OmniSync"
+        className="splash-icon"
+        width={120}
+        height={120}
+      />
 
       <h1 className="splash-title">OMNISYNC</h1>
       <p className="splash-subtitle">Initialising environment engine...</p>

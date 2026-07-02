@@ -21,8 +21,6 @@
 /build
 /dist
 
-# local agent / release prompts
-/BUILD_MACOS_BETA_DMG_PROMPT.txt
 
 # misc
 .DS_Store

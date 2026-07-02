@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
+import { augmentProcessEnv } from "@/lib/shellEnv";
 
 export interface RunnerStartOptions {
   runCommand?: string;
@@ -90,7 +91,7 @@ export function startRunner(cwd: string, options: RunnerStartOptions = {}) {
     const child = spawn(runCommand, [], {
       cwd,
       shell,
-      env: { ...process.env, PORT: String(port), FORCE_COLOR: "1" },
+      env: augmentProcessEnv({ ...process.env, PORT: String(port), FORCE_COLOR: "1" }),
     });
 
     state.childProcess = child;

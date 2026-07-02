@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/icon.png" alt="OmniSync logo" width="120" />
+</p>
+
 # OmniSync
 
 [![Version](https://img.shields.io/badge/version-0.1.0-blue)](https://github.com/nipunyatawara-dev/Omnisync)
@@ -184,4 +188,7 @@ Please keep changes focused and match the existing code style.
 
 ---
 
-Built for developers who juggle multiple repos and want one place to sync, diagnose, and launch.
+
+> **Cursor Composer 2.5 Flash** and **Gemini Flash 3.5** models were used for development support. 
+> 
+> This is a **Beta software** . Feedback and bug reports are welcome via [GitHub Issues](https://github.com/nipunyatawara-dev/Omnisync/issues).
