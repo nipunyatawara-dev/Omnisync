@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import crypto from "crypto";
 import os from "os";
+import { getUserDataDir } from "@/lib/userDataDir";
 
 export interface UserProfile {
   id: string;
@@ -26,7 +27,7 @@ export interface UserProfile {
   updatedAt: string;
 }
 
-const USER_DATA_DIR = path.join(process.cwd(), "User data");
+const USER_DATA_DIR = getUserDataDir();
 const PROFILES_FILE = path.join(USER_DATA_DIR, "profiles.json");
 const CONFIG_FILE = path.join(USER_DATA_DIR, "config.json"); // To store active profile
 const OAUTH_FILE = path.join(USER_DATA_DIR, "oauth.json"); // To store OAuth config credentials

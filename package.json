@@ -1,18 +1,24 @@
 {
   "name": "omnisync",
-  "version": "0.1.0",
+  "version": "0.1b",
   "private": true,
   "main": "main.js",
   "scripts": {
     "dev": "next dev -p 47821",
     "build": "next build",
+    "build:electron": "next build && node scripts/prepare-standalone.mjs && node scripts/generate-icons.mjs",
     "start": "next start -p 47821",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
     "electron": "electron .",
-    "electron:build": "next build && electron-builder --config electron-builder.json",
-    "electron:pack": "next build && electron-builder --dir --config electron-builder.json"
+    "electron:build": "npm run build:electron && electron-builder --config electron-builder.json",
+    "electron:pack": "npm run build:electron && electron-builder --dir --config electron-builder.json",
+    "electron:pack:mac-arm64": "npm run build:electron && electron-builder --mac dir --arm64 --config electron-builder.json",
+    "electron:pack:mac-x64": "npm run build:electron && electron-builder --mac dir --x64 --config electron-builder.json",
+    "electron:build:mac-arm64": "npm run build:electron && electron-builder --mac dmg --arm64 --config electron-builder.json",
+    "electron:build:mac-x64": "npm run build:electron && electron-builder --mac dmg --x64 --config electron-builder.json",
+    "electron:build:mac": "npm run electron:build:mac-arm64 && npm run electron:build:mac-x64"
   },
   "dependencies": {
     "next": "16.2.9",

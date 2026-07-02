@@ -14,7 +14,7 @@ const apiToken = crypto.randomBytes(32).toString("hex");
 // value persisted to disk, protected by the OS keychain via safeStorage when
 // available (falling back to a plaintext file only if encryption is unavailable).
 function getOrCreateEncryptionSecret() {
-  const userDataDir = path.join(process.cwd(), "User data");
+  const userDataDir = getUserDataDir();
   const secretFile = path.join(userDataDir, "secret.bin");
   const ENC_PREFIX = "v1:enc:";
   const PLAIN_PREFIX = "v1:plain:";
@@ -60,6 +60,34 @@ let mainWindow = null;
 const PORT = OMNISYNC_APP_PORT;
 const SERVER_URL = `http://localhost:${PORT}`;
 
+function getAppRoot() {
+  return app.isPackaged ? app.getAppPath() : process.cwd();
+}
+
+function getUserDataDir() {
+  return app.getPath("userData");
+}
+
+function getStandaloneDir() {
+  if (!app.isPackaged) {
+    return path.join(getAppRoot(), ".next", "standalone");
+  }
+  return path.join(process.resourcesPath, "app.asar.unpacked", ".next", "standalone");
+}
+
+function getAppIconPath() {
+  const candidates = [
+    path.join(__dirname, "public", "icon.png"),
+    path.join(process.resourcesPath || "", "icon.png"),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 // Function to poll the server until it is ready
 function waitForServer(callback) {
   const req = http.get(SERVER_URL, () => {
@@ -75,24 +103,49 @@ function waitForServer(callback) {
 
 function startNextServer() {
   const isDev = !app.isPackaged;
-  const command = isDev ? "dev" : "start";
+  const appRoot = getAppRoot();
+  const userDataDir = getUserDataDir();
+  const encryptionSecret = getOrCreateEncryptionSecret();
 
   console.log(`Starting Next.js server in ${isDev ? "development" : "production"} mode...`);
 
-  // Spawn Next.js server process with the generated API token in the environment
-  const encryptionSecret = getOrCreateEncryptionSecret();
+  const sharedEnv = {
+    ...process.env,
+    PORT: PORT.toString(),
+    HOSTNAME: "127.0.0.1",
+    NEXT_PUBLIC_OMNISYNC_PORT: PORT.toString(),
+    OMNISYNC_API_TOKEN: apiToken,
+    OMNISYNC_ENCRYPTION_SECRET: encryptionSecret,
+    OMNISYNC_USER_DATA_DIR: userDataDir,
+  };
 
-  const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
-  nextProcess = spawn(npxCmd, ["next", command], {
-    cwd: process.cwd(),
-    env: {
-      ...process.env,
-      PORT: PORT.toString(),
-      NEXT_PUBLIC_OMNISYNC_PORT: PORT.toString(),
-      OMNISYNC_API_TOKEN: apiToken,
-      OMNISYNC_ENCRYPTION_SECRET: encryptionSecret,
-    },
-    shell: process.platform === "win32",
+  if (isDev) {
+    const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
+    nextProcess = spawn(npxCmd, ["next", "dev", "-p", PORT.toString()], {
+      cwd: appRoot,
+      env: sharedEnv,
+      shell: process.platform === "win32",
+    });
+  } else {
+    const standaloneDir = getStandaloneDir();
+    const serverScript = path.join(standaloneDir, "server.js");
+    nextProcess = spawn(process.execPath, [serverScript], {
+      cwd: standaloneDir,
+      env: {
+        ...sharedEnv,
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+    });
+  }
+
+  nextProcess.on("error", (err) => {
+    console.error("Failed to start Next.js server:", err);
+  });
+
+  nextProcess.on("exit", (code, signal) => {
+    if (code !== 0 && code !== null) {
+      console.error(`Next.js server exited with code=${code} signal=${signal}`);
+    }
   });
 
   nextProcess.stdout.on("data", (data) => {
@@ -125,12 +178,14 @@ function createWindow() {
     console.error("Failed to provision authentication cookie:", err);
   });
 
+  const iconPath = getAppIconPath();
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 850,
     minWidth: 1000,
     minHeight: 700,
-    icon: path.join(__dirname, "public", "icon.png"),
+    ...(iconPath ? { icon: iconPath } : {}),
     ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
     backgroundColor: "#0d1117",
     show: false, // Don't show until ready-to-show
@@ -142,10 +197,12 @@ function createWindow() {
   });
 
   // Set Dock icon on macOS
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin" && iconPath) {
     try {
-      const image = nativeImage.createFromPath(path.join(__dirname, "public", "icon.png"));
-      app.dock.setIcon(image);
+      const image = nativeImage.createFromPath(iconPath);
+      if (!image.isEmpty()) {
+        app.dock.setIcon(image);
+      }
     } catch (err) {
       console.error("Failed to set macOS dock icon:", err);
     }

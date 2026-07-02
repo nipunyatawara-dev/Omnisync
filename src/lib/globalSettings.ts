@@ -5,11 +5,12 @@ import {
   type GlobalSettings,
   autoFetchIntervalMs,
 } from "@/lib/globalSettingsTypes";
+import { getUserDataDir } from "@/lib/userDataDir";
 
 export type { AccentColor, GlobalSettings } from "@/lib/globalSettingsTypes";
 export { DEFAULT_GLOBAL_SETTINGS, autoFetchIntervalMs } from "@/lib/globalSettingsTypes";
 
-const USER_DATA_DIR = path.join(process.cwd(), "User data");
+const USER_DATA_DIR = getUserDataDir();
 const SETTINGS_FILE = path.join(USER_DATA_DIR, "global-settings.json");
 
 async function ensureDir() {

@@ -36,20 +36,13 @@ export default function FirstLaunchSplash() {
   return (
     <div className={`splash-overlay ${fadeOut ? "fade-out" : ""}`}>
       <div className="splash-logo-container">
-        {/* Glowing swirling SVG sync icon */}
-        <svg
+        <img
+          src="/icon.png"
+          alt="OmniSync"
           className="splash-icon"
-          width="40"
-          height="40"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="#58a6ff"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-        </svg>
+          width={72}
+          height={72}
+        />
       </div>
 
       <h1 className="splash-title">OMNISYNC</h1>
