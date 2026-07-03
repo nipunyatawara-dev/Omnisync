@@ -71,15 +71,17 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const profile = await getActiveProfile();
-  if (!profile || !profile.workspacePath) {
-    return NextResponse.json({ error: "No active workspace path" }, { status: 400 });
-  }
-
-  const cwd = profile.workspacePath;
-
   try {
-    const { type, port, ide } = await request.json();
+    const { type, port, ide, workspacePath } = await request.json();
+    let cwd = typeof workspacePath === "string" ? workspacePath : undefined;
+
+    if (!cwd) {
+      const profile = await getActiveProfile();
+      if (!profile?.workspacePath) {
+        return NextResponse.json({ error: "No workspace path" }, { status: 400 });
+      }
+      cwd = profile.workspacePath;
+    }
 
     if (type === "folder") {
       await openPath(cwd);
@@ -97,8 +99,8 @@ export async function POST(request: Request) {
     if (type === "browser") {
       const logs = getRunnerLogs();
       const urlRegex = /http:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d+)/i;
-      const defaultPort = profile.port && profile.port > 0 ? profile.port : 3000;
-      let url = `http://localhost:${port || defaultPort}`;
+      const defaultPort = typeof port === "number" && port > 0 ? port : 3000;
+      let url = `http://localhost:${defaultPort}`;
 
       for (let i = logs.length - 1; i >= 0; i--) {
         const match = logs[i].match(urlRegex);

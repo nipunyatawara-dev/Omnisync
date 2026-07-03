@@ -8,6 +8,21 @@ function getLoginShell() {
   return process.env.SHELL || "/bin/zsh";
 }
 
+/**
+ * Interactive login shells (`-ilc`) source ~/.zshrc, which on many machines includes
+ * a terminal shell-integration snippet (iTerm2/VS Code/Cursor) that unconditionally
+ * writes OSC escape sequences (e.g. "\x1b]1337;CurrentDir=...\x07") to stdout on
+ * startup — even though no real terminal is attached. Without a trailing newline
+ * before the real output, that junk gets concatenated onto whatever we're trying to
+ * capture (a PATH value or a resolved binary path), corrupting it. Strip it out.
+ */
+function stripTerminalEscapeSequences(str) {
+  return str
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "")
+    .replace(/[\x1b\x9b]/g, "");
+}
+
 function getLoginShellPath() {
   if (cachedLoginPath) return cachedLoginPath;
 
@@ -28,12 +43,17 @@ function getLoginShellPath() {
 
   try {
     const shell = getLoginShell();
-    cachedLoginPath = execSync(`${shell} -ilc 'echo -n $PATH'`, {
+    const raw = execSync(`${shell} -ilc 'echo -n $PATH'`, {
       encoding: "utf8",
       timeout: 8000,
       env: baseSpawnEnv(),
-    }).trim();
-    if (!cachedLoginPath) cachedLoginPath = fallback;
+    });
+    const cleaned = stripTerminalEscapeSequences(raw).trim();
+    // A real PATH is a colon-separated list of absolute paths; anything else means
+    // shell startup noise (banners, integration scripts) survived the cleanup.
+    cachedLoginPath = cleaned && cleaned.split(":").every((part) => part.startsWith("/"))
+      ? cleaned
+      : fallback;
   } catch {
     cachedLoginPath = fallback;
   }
@@ -69,8 +89,16 @@ function resolveCommand(name) {
       encoding: "utf8",
       timeout: 8000,
       env: augmentProcessEnv(),
-    }).trim();
-    const line = output.split("\n").filter(Boolean).pop();
+    });
+    const cleaned = stripTerminalEscapeSequences(output).trim();
+    const line = cleaned
+      .split("\n")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .reverse()
+      // Guard against any leftover startup noise glued onto the real path: only
+      // trust a line that actually looks like an absolute path ending in the tool name.
+      .find((part) => part.startsWith("/") && part.endsWith(name));
     if (line) resolved = line;
   } catch {}
 

@@ -32,6 +32,15 @@ export async function getGlobalSettings(): Promise<GlobalSettings> {
   }
 }
 
+export async function hasPersistedGlobalSettings(): Promise<boolean> {
+  try {
+    await fs.access(SETTINGS_FILE);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function saveGlobalSettings(
   updates: Partial<GlobalSettings>
 ): Promise<GlobalSettings> {

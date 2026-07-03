@@ -260,8 +260,12 @@ export async function setActiveProfileId(id: string | null): Promise<void> {
 export async function getActiveProfile(): Promise<UserProfile | null> {
   const activeId = await getActiveProfileId();
   if (!activeId) return null;
+  return getProfileById(activeId);
+}
+
+export async function getProfileById(id: string): Promise<UserProfile | null> {
   const profiles = await getProfiles();
-  return profiles.find((p) => p.id === activeId) || null;
+  return profiles.find((p) => p.id === id) || null;
 }
 
 // Delete profile

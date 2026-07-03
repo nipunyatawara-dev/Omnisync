@@ -73,6 +73,17 @@ export async function resetBrokenEsbuildInstall(cwd: string): Promise<string | n
   );
 }
 
+/**
+ * Strip ANSI CSI sequences and OSC sequences (e.g. terminal shell-integration markers
+ * like "\x1b]1337;CurrentDir=...\x07" that iTerm2/VS Code/Cursor inject into interactive
+ * login shells) from captured process output before displaying it to the user.
+ */
+export function stripTerminalEscapeSequences(str: string): string {
+  return str
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "")
+    .replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+}
+
 /** Drop npm's unreadable Buffer byte dumps from install error output. */
 export function sanitizeNpmInstallLogLine(line: string): string | null {
   const trimmed = line.trim();

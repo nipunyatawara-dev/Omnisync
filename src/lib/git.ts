@@ -87,6 +87,46 @@ export async function applyGitIdentity(
   }
 }
 
+function runGitNoCwd(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      args,
+      { encoding: "utf-8", timeout: 10000, env: augmentProcessEnv() },
+      (error, stdout, stderr) => {
+        if (error) {
+          const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();
+          reject(new GitCommandError(msg, stderr?.trim() || ""));
+          return;
+        }
+        resolve((stdout || "").trim());
+      }
+    );
+  });
+}
+
+/** Read a git config value from a repo (local → global) or from global config only. */
+export async function readGitConfig(key: string, cwd?: string): Promise<string | null> {
+  try {
+    if (cwd) {
+      const value = await runGit(["config", "--get", key], cwd);
+      return value || null;
+    }
+    const value = await runGitNoCwd(["config", "--global", "--get", key]);
+    return value || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveGitIdentity(cwd?: string): Promise<{ name: string; email: string }> {
+  const [name, email] = await Promise.all([
+    readGitConfig("user.name", cwd),
+    readGitConfig("user.email", cwd),
+  ]);
+  return { name: name || "", email: email || "" };
+}
+
 export async function gitFetch(cwd: string, token?: string): Promise<void> {
   await execGit(["fetch", "--all", "--prune"], cwd, token);
 }

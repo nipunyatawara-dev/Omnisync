@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getActiveProfile, getGithubToken } from "@/lib/profiles";
+import { getActiveProfile, getGithubToken, getProfileById } from "@/lib/profiles";
 import { getGlobalSettings } from "@/lib/globalSettings";
 import { execFile } from "child_process";
 import {
@@ -95,14 +95,15 @@ async function syncResponse(cwd: string, defaultBranch: string) {
 }
 
 export async function GET(request: Request) {
-  const profile = await getActiveProfile();
+  const { searchParams } = new URL(request.url);
+  const profileId = searchParams.get("profileId");
+  const profile = profileId ? await getProfileById(profileId) : await getActiveProfile();
   if (!profile || !profile.workspacePath) {
-    return NextResponse.json({ error: "No active workspace path" }, { status: 400 });
+    return NextResponse.json({ error: "No workspace path" }, { status: 400 });
   }
 
   const cwd = profile.workspacePath;
   const global = await getGlobalSettings();
-  const { searchParams } = new URL(request.url);
   const action = searchParams.get("action");
 
   try {
@@ -176,9 +177,17 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const profile = await getActiveProfile();
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const profileId = typeof body.profileId === "string" ? body.profileId : null;
+  const profile = profileId ? await getProfileById(profileId) : await getActiveProfile();
   if (!profile || !profile.workspacePath) {
-    return NextResponse.json({ error: "No active workspace path" }, { status: 400 });
+    return NextResponse.json({ error: "No workspace path" }, { status: 400 });
   }
 
   const cwd = profile.workspacePath;
@@ -186,8 +195,13 @@ export async function POST(request: Request) {
   const token = profile.gitToken || (await getGithubToken()) || undefined;
 
   try {
-    const body = await request.json();
-    const { action, branch, files, file, message, amend, strategy } = body;
+    const action = typeof body.action === "string" ? body.action : "";
+    const branch = body.branch;
+    const files = body.files;
+    const file = body.file;
+    const message = body.message;
+    const amend = body.amend;
+    const strategy = body.strategy;
 
     if (REMOTE_GIT_ACTIONS.has(action) && !token) {
       return NextResponse.json(
@@ -198,6 +212,13 @@ export async function POST(request: Request) {
         },
         { status: 401 }
       );
+    }
+
+    if (action === "set-identity") {
+      const name = typeof body.name === "string" ? body.name : "";
+      const email = typeof body.email === "string" ? body.email : "";
+      await applyGitIdentity(cwd, name, email);
+      return NextResponse.json({ success: true });
     }
 
     if (action === "fetch") {

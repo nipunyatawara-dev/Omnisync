@@ -1,10 +1,30 @@
 import { NextResponse } from "next/server";
-import { getGlobalSettings, saveGlobalSettings, type GlobalSettings } from "@/lib/globalSettings";
+import { getGlobalSettings, hasPersistedGlobalSettings, saveGlobalSettings, type GlobalSettings } from "@/lib/globalSettings";
 import { getActiveProfile } from "@/lib/profiles";
-import { applyGitIdentity } from "@/lib/git";
+import { applyGitIdentity, getCurrentBranch, resolveGitIdentity } from "@/lib/git";
+
+async function hydrateGitSettings(settings: GlobalSettings): Promise<GlobalSettings> {
+  const profile = await getActiveProfile();
+  const cwd = profile?.workspacePath;
+  const identity = await resolveGitIdentity(cwd);
+  const persisted = await hasPersistedGlobalSettings();
+
+  let defaultBranch = settings.defaultBranch || "main";
+  if (cwd && (!persisted || !settings.gitUsername)) {
+    const currentBranch = await getCurrentBranch(cwd);
+    if (currentBranch) defaultBranch = currentBranch;
+  }
+
+  return {
+    ...settings,
+    gitUsername: settings.gitUsername || identity.name,
+    gitEmail: settings.gitEmail || identity.email,
+    defaultBranch,
+  };
+}
 
 export async function GET() {
-  const settings = await getGlobalSettings();
+  const settings = await hydrateGitSettings(await getGlobalSettings());
   return NextResponse.json({ settings });
 }
 

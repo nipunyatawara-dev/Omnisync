@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from "child_process";
 import { augmentProcessEnv } from "@/lib/shellEnv";
+import { stripTerminalEscapeSequences } from "@/lib/npmInstall";
 
 export interface RunnerStartOptions {
   runCommand?: string;
@@ -56,7 +57,7 @@ function resolveShell(explicit?: string): string | boolean {
 // Append a log line with time stamp
 function appendLog(text: string) {
   const time = new Date().toLocaleTimeString();
-  const cleanText = text.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+  const cleanText = stripTerminalEscapeSequences(text);
   state.logs.push(`[${time}] ${cleanText}`);
   // Cap at 1000 lines
   if (state.logs.length > 1000) {

@@ -147,7 +147,8 @@ export default function GlobalSettingsView({
         <div className="card" style={cardStyle}>
           <h3 style={sectionTitleStyle}>Git Identity</h3>
           <p style={{ ...hintStyle, margin: 0 }}>
-            Applied to the active workspace repository when you save. Used for commits and sync operations.
+            Pulled from your git configuration when not yet saved in OmniSync. Applied to the active
+            workspace repository when you save.
           </p>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
@@ -198,7 +199,9 @@ export default function GlobalSettingsView({
                 onChange={(e) => onUpdate("defaultBranch", e.target.value)}
                 placeholder="main"
               />
-              <span style={hintStyle}>Used for upstream comparison when syncing.</span>
+              <span style={hintStyle}>
+                Used for upstream comparison when syncing. Defaults to the active workspace&apos;s current branch.
+              </span>
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>

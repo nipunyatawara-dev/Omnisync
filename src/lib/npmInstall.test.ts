@@ -8,6 +8,7 @@ import {
   resolveDependencyInstallArgs,
   isNativeExecutable,
   sanitizeNpmInstallLogLine,
+  stripTerminalEscapeSequences,
 } from "@/lib/npmInstall";
 
 describe("npmInstall", () => {
@@ -92,6 +93,22 @@ describe("npmInstall", () => {
     expect(
       sanitizeNpmInstallLogLine("npm error SyntaxError: Invalid or unexpected token")
     ).toContain("esbuild postinstall failed");
+  });
+
+  it("strips iTerm2/VS Code shell-integration OSC sequences from process output", () => {
+    const polluted =
+      "zsh:1: no such file or directory: \x1b]1337;RemoteHost=user@Mac.local\x07" +
+      "\x1b]1337;CurrentDir=/Applications/OmniSync.app/Contents/Resources/app.asar.unpacked/.next/standalone\x07" +
+      "\x1b]1337;ShellIntegrationVersion=14;shell=zsh\x07/Users/user/.local/bin/npm";
+
+    expect(stripTerminalEscapeSequences(polluted)).toBe(
+      "zsh:1: no such file or directory: /Users/user/.local/bin/npm"
+    );
+  });
+
+  it("strips CSI color/cursor escape codes alongside OSC sequences", () => {
+    const colored = "\x1b[32minstalled\x1b[0m 42 packages";
+    expect(stripTerminalEscapeSequences(colored)).toBe("installed 42 packages");
   });
 });
 

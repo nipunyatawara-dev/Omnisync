@@ -2200,8 +2200,7 @@ export default function DashboardPage() {
             <div id="tour-settings-panel" style={{ flex: 1, height: "100%", overflow: "hidden" }}>
             <SettingsPageView
               mode="embedded"
-              activeProfile={activeProfile}
-              onProfileUpdated={(updatedProfile) => {
+              onActiveProfileUpdated={(updatedProfile) => {
                 const commandChanged =
                   updatedProfile.runCommand !== activeProfile?.runCommand ||
                   updatedProfile.port !== activeProfile?.port;
@@ -2220,6 +2219,7 @@ export default function DashboardPage() {
                   );
                 }
               }}
+              onActiveProfileDeleted={() => router.push("/setup")}
             />
             </div>
           )}

@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { getActiveProfile } from "@/lib/profiles";
+import { getActiveProfile, getProfileById } from "@/lib/profiles";
 import { execFile } from "child_process";
 import { promises as fs } from "fs";
 import path from "path";
 import os from "os";
-import { getCurrentBranch, getRemoteOriginUrl } from "@/lib/git";
+import { getCurrentBranch, getRemoteOriginUrl, resolveGitIdentity } from "@/lib/git";
 import {
   resetBrokenEsbuildInstall,
   resolveDependencyInstallArgs,
   sanitizeNpmInstallLogLine,
+  stripTerminalEscapeSequences,
 } from "@/lib/npmInstall";
 import { augmentProcessEnv, spawnTool } from "@/lib/shellEnv";
 
@@ -24,10 +25,11 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
-export async function GET() {
-  const profile = await getActiveProfile();
+export async function GET(request: Request) {
+  const profileId = new URL(request.url).searchParams.get("profileId");
+  const profile = profileId ? await getProfileById(profileId) : await getActiveProfile();
   if (!profile || !profile.workspacePath) {
-    return NextResponse.json({ error: "No active workspace path" }, { status: 400 });
+    return NextResponse.json({ error: "No workspace path" }, { status: 400 });
   }
 
   const cwd = profile.workspacePath;
@@ -124,10 +126,15 @@ export async function GET() {
 
   let currentBranch: string | null = null;
   let remoteUrl: string | null = null;
+  let gitAuthorName = "";
+  let gitAuthorEmail = "";
   if (gitStatus !== "Not a Git repository") {
     try {
       currentBranch = await getCurrentBranch(cwd);
       remoteUrl = await getRemoteOriginUrl(cwd);
+      const identity = await resolveGitIdentity(cwd);
+      gitAuthorName = identity.name;
+      gitAuthorEmail = identity.email;
     } catch {}
   }
 
@@ -149,6 +156,8 @@ export async function GET() {
     folderName,
     currentBranch,
     remoteUrl,
+    gitAuthorName,
+    gitAuthorEmail,
   });
 }
 
@@ -186,14 +195,14 @@ export async function POST(request: Request) {
     const customStream = new ReadableStream({
       async start(controller) {
         const sendLog = (message: string) => {
-          const stripped = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const stripped = stripTerminalEscapeSequences(message);
           const clean = sanitizeNpmInstallLogLine(stripped);
           if (clean === null) return;
           controller.enqueue(encoder.encode(JSON.stringify({ type: "log", message: clean }) + "\n"));
         };
 
         const sendError = (message: string) => {
-          const stripped = message.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, "");
+          const stripped = stripTerminalEscapeSequences(message);
           const clean = sanitizeNpmInstallLogLine(stripped) ?? stripped.trim();
           if (!clean) return;
           controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: clean }) + "\n"));

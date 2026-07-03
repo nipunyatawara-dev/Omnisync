@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import GlobalSettingsView from "@/components/GlobalSettingsView";
 import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
@@ -13,34 +13,92 @@ interface SettingsPageViewProps {
   mode?: "page" | "embedded";
   defaultTab?: SettingsTab;
   returnTo?: string;
-  activeProfile?: UserProfile | null;
-  onProfileUpdated?: (updated: UserProfile) => void;
+  /** Called when the currently active workspace profile is updated (dashboard sync). */
+  onActiveProfileUpdated?: (updated: UserProfile) => void;
+  /** Called when the active workspace is deleted from settings. */
+  onActiveProfileDeleted?: () => void;
 }
 
-const TABS: { id: SettingsTab; label: string; requiresProfile?: boolean }[] = [
+const TABS: { id: SettingsTab; label: string }[] = [
   { id: "general", label: "General" },
   { id: "git", label: "Git" },
-  { id: "workspace", label: "Workspace", requiresProfile: true },
+  { id: "workspace", label: "Workspaces" },
 ];
+
+function workspaceLabel(profile: UserProfile): string {
+  return profile.name || profile.workspacePath?.split("/").pop() || "Untitled workspace";
+}
 
 export default function SettingsPageView({
   mode = "embedded",
   defaultTab = "general",
   returnTo,
-  activeProfile = null,
-  onProfileUpdated,
+  onActiveProfileUpdated,
+  onActiveProfileDeleted,
 }: SettingsPageViewProps) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>(defaultTab);
   const globalSettings = useGlobalSettings();
 
-  const visibleTabs = TABS.filter((tab) => !tab.requiresProfile || activeProfile);
+  const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
+  const [isLoadingProfiles, setIsLoadingProfiles] = useState(true);
+
+  const loadProfiles = useCallback(async () => {
+    try {
+      const res = await fetch("/api/profiles");
+      const data = await res.json();
+      const list = (data.profiles || []) as UserProfile[];
+      const activeId = (data.activeProfileId as string | null) ?? null;
+      setProfiles(list);
+      setActiveProfileId(activeId);
+      setSelectedWorkspaceId((current) => {
+        if (current && list.some((p) => p.id === current)) return current;
+        if (activeId && list.some((p) => p.id === activeId)) return activeId;
+        return list[0]?.id ?? null;
+      });
+    } catch {
+      setProfiles([]);
+      setActiveProfileId(null);
+      setSelectedWorkspaceId(null);
+    } finally {
+      setIsLoadingProfiles(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadProfiles();
+  }, [loadProfiles]);
+
+  const selectedProfile = profiles.find((p) => p.id === selectedWorkspaceId) ?? null;
+
+  const handleProfileUpdated = (updated: UserProfile) => {
+    setProfiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    if (updated.id === activeProfileId) {
+      onActiveProfileUpdated?.(updated);
+    }
+  };
+
+  const handleProfileDeleted = (deletedId: string) => {
+    const remaining = profiles.filter((p) => p.id !== deletedId);
+    setProfiles(remaining);
+    if (selectedWorkspaceId === deletedId) {
+      const nextId =
+        remaining.find((p) => p.id === activeProfileId)?.id ?? remaining[0]?.id ?? null;
+      setSelectedWorkspaceId(nextId);
+    }
+    if (deletedId === activeProfileId) {
+      setActiveProfileId(remaining[0]?.id ?? null);
+      onActiveProfileDeleted?.();
+    }
+  };
 
   const handleBack = () => {
     if (returnTo) {
       router.push(returnTo);
     } else if (mode === "page") {
-      router.push(activeProfile ? "/" : "/setup");
+      router.push(activeProfileId ? "/" : "/setup");
     }
   };
 
@@ -92,7 +150,7 @@ export default function SettingsPageView({
                 Settings
               </h1>
               <p style={{ fontSize: "11px", color: "var(--color-fg-muted)", margin: "2px 0 0 0" }}>
-                Global preferences and workspace configuration
+                App preferences and per-workspace configuration
               </p>
             </div>
           </div>
@@ -129,7 +187,7 @@ export default function SettingsPageView({
             </div>
           )}
 
-          {visibleTabs.map((tab) => (
+          {TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -160,7 +218,13 @@ export default function SettingsPageView({
             padding: mode === "embedded" ? "24px 32px" : "32px 40px",
           }}
         >
-          <div style={{ maxWidth: "720px", margin: "0 auto", width: "100%" }}>
+          <div
+            style={{
+              maxWidth: activeTab === "workspace" ? "960px" : "720px",
+              margin: "0 auto",
+              width: "100%",
+            }}
+          >
             {(activeTab === "general" || activeTab === "git") && (
               <>
                 <div style={{ marginBottom: "24px" }}>
@@ -194,12 +258,138 @@ export default function SettingsPageView({
               </>
             )}
 
-            {activeTab === "workspace" && activeProfile && onProfileUpdated && (
-              <WorkspaceSettingsView
-                activeProfile={activeProfile}
-                onProfileUpdated={onProfileUpdated}
-                embedded
-              />
+            {activeTab === "workspace" && (
+              <div style={{ display: "flex", gap: "24px", alignItems: "flex-start" }}>
+                <aside
+                  style={{
+                    width: "220px",
+                    flexShrink: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "8px",
+                    position: "sticky",
+                    top: 0,
+                  }}
+                >
+                  <div>
+                    <h2
+                      style={{
+                        fontSize: "20px",
+                        fontWeight: 700,
+                        letterSpacing: "-0.5px",
+                        margin: 0,
+                        color: "var(--color-fg-default)",
+                      }}
+                    >
+                      Workspaces
+                    </h2>
+                    <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
+                      Select a workspace to edit its settings.
+                    </p>
+                  </div>
+
+                  {isLoadingProfiles ? (
+                    <p style={{ fontSize: "12px", color: "var(--color-fg-muted)", padding: "8px" }}>
+                      Loading workspaces…
+                    </p>
+                  ) : profiles.length === 0 ? (
+                    <div
+                      className="card"
+                      style={{ padding: "16px", fontSize: "12px", color: "var(--color-fg-muted)", lineHeight: 1.5 }}
+                    >
+                      No workspaces yet.{" "}
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-primary"
+                        style={{ marginTop: "8px", width: "100%" }}
+                        onClick={() => router.push("/setup")}
+                      >
+                        Add workspace
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      {profiles.map((profile) => {
+                        const isSelected = profile.id === selectedWorkspaceId;
+                        const isActive = profile.id === activeProfileId;
+                        return (
+                          <button
+                            key={profile.id}
+                            type="button"
+                            onClick={() => setSelectedWorkspaceId(profile.id)}
+                            style={{
+                              padding: "10px 12px",
+                              borderRadius: "6px",
+                              border: `1px solid ${isSelected ? "var(--color-accent-border, var(--color-border-default))" : "var(--color-border-default)"}`,
+                              background: isSelected ? "var(--color-bg-active)" : "var(--color-bg-subtle)",
+                              color: "var(--color-fg-default)",
+                              cursor: "pointer",
+                              textAlign: "left",
+                              width: "100%",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: "4px",
+                            }}
+                          >
+                            <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "13px", fontWeight: 600 }}>
+                              {workspaceLabel(profile)}
+                              {isActive && (
+                                <span
+                                  style={{
+                                    fontSize: "9px",
+                                    fontWeight: 700,
+                                    textTransform: "uppercase",
+                                    letterSpacing: "0.04em",
+                                    padding: "2px 5px",
+                                    borderRadius: "4px",
+                                    backgroundColor: "var(--color-success-bg)",
+                                    color: "var(--color-success-fg)",
+                                  }}
+                                >
+                                  Active
+                                </span>
+                              )}
+                            </span>
+                            {profile.workspacePath && (
+                              <span
+                                style={{
+                                  fontSize: "10px",
+                                  color: "var(--color-fg-muted)",
+                                  fontFamily: "var(--font-mono)",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {profile.workspacePath}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </aside>
+
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {selectedProfile ? (
+                    <WorkspaceSettingsView
+                      profile={selectedProfile}
+                      isActive={selectedProfile.id === activeProfileId}
+                      onProfileUpdated={handleProfileUpdated}
+                      onProfileDeleted={handleProfileDeleted}
+                      embedded
+                    />
+                  ) : (
+                    !isLoadingProfiles &&
+                    profiles.length > 0 && (
+                      <p style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>
+                        Select a workspace from the list to view and edit its settings.
+                      </p>
+                    )
+                  )}
+                </div>
+              </div>
             )}
           </div>
         </div>

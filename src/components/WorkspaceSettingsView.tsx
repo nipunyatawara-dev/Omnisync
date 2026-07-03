@@ -12,8 +12,10 @@ declare global {
 }
 
 interface WorkspaceSettingsViewProps {
-  activeProfile: UserProfile | null;
+  profile: UserProfile;
+  isActive?: boolean;
   onProfileUpdated: (updated: UserProfile) => void;
+  onProfileDeleted?: (deletedId: string) => void;
   embedded?: boolean;
 }
 
@@ -27,6 +29,8 @@ interface WorkspaceDiagnostics {
   missingDependencies: string[];
   currentBranch: string | null;
   remoteUrl: string | null;
+  gitAuthorName?: string;
+  gitAuthorEmail?: string;
   isNodeCompatible: boolean;
   nodeVersion: string;
   npmVersion: string;
@@ -185,22 +189,26 @@ function PresetChips({ presets, onSelect }: { presets: string[]; onSelect: (valu
 }
 
 export default function WorkspaceSettingsView({
-  activeProfile,
+  profile,
+  isActive = false,
   onProfileUpdated,
+  onProfileDeleted,
   embedded = false,
 }: WorkspaceSettingsViewProps) {
-  const [workspaceName, setWorkspaceName] = useState(activeProfile?.name || "");
-  const [workspacePath, setWorkspacePath] = useState(activeProfile?.workspacePath || "");
-  const workspaceType = activeProfile?.workspaceType || "manual";
+  const [workspaceName, setWorkspaceName] = useState(profile.name || "");
+  const [workspacePath, setWorkspacePath] = useState(profile.workspacePath || "");
+  const workspaceType = profile.workspaceType || "manual";
 
-  const [branchProtection, setBranchProtection] = useState<boolean>(activeProfile?.branchProtection ?? true);
+  const [branchProtection, setBranchProtection] = useState<boolean>(profile.branchProtection ?? true);
   const [protectedBranchesText, setProtectedBranchesText] = useState<string>(
-    (activeProfile?.protectedBranches ?? []).join(", ")
+    (profile.protectedBranches ?? []).join(", ")
   );
-  const [autoFetch, setAutoFetch] = useState<boolean>(activeProfile?.autoFetch ?? true);
-  const [devPort, setDevPort] = useState<number>(activeProfile?.port ?? 3000);
-  const [runCommand, setRunCommand] = useState<string>(activeProfile?.runCommand ?? "npm run dev");
-  const [buildCommand, setBuildCommand] = useState<string>(activeProfile?.buildCommand ?? "npm run build");
+  const [autoFetch, setAutoFetch] = useState<boolean>(profile.autoFetch ?? true);
+  const [devPort, setDevPort] = useState<number>(profile.port ?? 3000);
+  const [runCommand, setRunCommand] = useState<string>(profile.runCommand ?? "npm run dev");
+  const [buildCommand, setBuildCommand] = useState<string>(profile.buildCommand ?? "npm run build");
+  const [gitAuthorName, setGitAuthorName] = useState("");
+  const [gitAuthorEmail, setGitAuthorEmail] = useState("");
 
   const [diagnostics, setDiagnostics] = useState<WorkspaceDiagnostics | null>(null);
   const [syncSnapshot, setSyncSnapshot] = useState<SyncSnapshot | null>(null);
@@ -213,22 +221,27 @@ export default function WorkspaceSettingsView({
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const loadWorkspaceInfo = useCallback(async () => {
-    if (!activeProfile?.workspacePath) {
+    if (!profile.workspacePath) {
       setDiagnostics(null);
       setSyncSnapshot(null);
       setIsLoadingInfo(false);
       return;
     }
 
+    const profileQuery = `profileId=${encodeURIComponent(profile.id)}`;
+
     setIsLoadingInfo(true);
     try {
       const [diagRes, syncRes] = await Promise.all([
-        fetch("/api/workspace/diagnostics"),
-        fetch("/api/workspace/git?action=status"),
+        fetch(`/api/workspace/diagnostics?${profileQuery}`),
+        fetch(`/api/workspace/git?action=status&${profileQuery}`),
       ]);
 
       if (diagRes.ok) {
-        setDiagnostics(await diagRes.json());
+        const data = await diagRes.json();
+        setDiagnostics(data);
+        setGitAuthorName(data.gitAuthorName || "");
+        setGitAuthorEmail(data.gitAuthorEmail || "");
       }
 
       if (syncRes.ok) {
@@ -247,19 +260,21 @@ export default function WorkspaceSettingsView({
     } finally {
       setIsLoadingInfo(false);
     }
-  }, [activeProfile?.workspacePath]);
+  }, [profile.id, profile.workspacePath]);
 
   useEffect(() => {
-    if (!activeProfile) return;
-    setWorkspaceName(activeProfile.name || "");
-    setWorkspacePath(activeProfile.workspacePath || "");
-    setBranchProtection(activeProfile.branchProtection ?? true);
-    setProtectedBranchesText((activeProfile.protectedBranches ?? []).join(", "));
-    setAutoFetch(activeProfile.autoFetch ?? true);
-    setDevPort(activeProfile.port ?? 3000);
-    setRunCommand(activeProfile.runCommand ?? "npm run dev");
-    setBuildCommand(activeProfile.buildCommand ?? "npm run build");
-  }, [activeProfile]);
+    setWorkspaceName(profile.name || "");
+    setWorkspacePath(profile.workspacePath || "");
+    setBranchProtection(profile.branchProtection ?? true);
+    setProtectedBranchesText((profile.protectedBranches ?? []).join(", "));
+    setAutoFetch(profile.autoFetch ?? true);
+    setDevPort(profile.port ?? 3000);
+    setRunCommand(profile.runCommand ?? "npm run dev");
+    setBuildCommand(profile.buildCommand ?? "npm run build");
+    setGitAuthorName("");
+    setGitAuthorEmail("");
+    setMessage(null);
+  }, [profile]);
 
   useEffect(() => {
     loadWorkspaceInfo();
@@ -276,7 +291,6 @@ export default function WorkspaceSettingsView({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeProfile) return;
 
     setIsSaving(true);
     setMessage(null);
@@ -287,9 +301,9 @@ export default function WorkspaceSettingsView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "update",
-          id: activeProfile.id,
+          id: profile.id,
           updates: {
-            name: workspaceName.trim() || activeProfile.name,
+            name: workspaceName.trim() || profile.name,
             workspacePath,
             workspaceType,
             branchProtection,
@@ -307,6 +321,28 @@ export default function WorkspaceSettingsView({
 
       const data = await res.json();
       if (data.success && data.profile) {
+        const identityRes = await fetch("/api/workspace/git", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "set-identity",
+            profileId: profile.id,
+            name: gitAuthorName,
+            email: gitAuthorEmail,
+          }),
+        });
+
+        if (!identityRes.ok) {
+          const identityData = await identityRes.json();
+          setMessage({
+            type: "error",
+            text: identityData.error || "Workspace saved, but git identity update failed.",
+          });
+          onProfileUpdated(data.profile);
+          loadWorkspaceInfo();
+          return;
+        }
+
         setMessage({ type: "success", text: "Workspace settings saved." });
         onProfileUpdated(data.profile);
         loadWorkspaceInfo();
@@ -328,7 +364,7 @@ export default function WorkspaceSettingsView({
       const res = await fetch("/api/workspace/git", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "fetch" }),
+        body: JSON.stringify({ action: "fetch", profileId: profile.id }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -351,7 +387,11 @@ export default function WorkspaceSettingsView({
       const res = await fetch("/api/workspace/launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(type === "folder" ? { type: "folder" } : { type: "ide", ide: "vscode" }),
+        body: JSON.stringify(
+          type === "folder"
+            ? { type: "folder", workspacePath }
+            : { type: "ide", ide: "vscode", workspacePath }
+        ),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -365,7 +405,6 @@ export default function WorkspaceSettingsView({
   };
 
   const handleDeleteWorkspace = async () => {
-    if (!activeProfile) return;
     const confirmed = confirm(
       "Delete this workspace from OmniSync? Your files on disk and GitHub connection are kept."
     );
@@ -376,25 +415,29 @@ export default function WorkspaceSettingsView({
       await fetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", id: activeProfile.id }),
+        body: JSON.stringify({ action: "delete", id: profile.id }),
       });
 
-      const profilesRes = await fetch("/api/profiles");
-      const data = await profilesRes.json();
-      const remainingProfiles = (data.profiles || []) as UserProfile[];
-      const nextActiveId = data.activeProfileId as string | null;
+      onProfileDeleted?.(profile.id);
 
-      if (remainingProfiles.length > 0 && nextActiveId) {
-        const nextProfile = remainingProfiles.find((profile) => profile.id === nextActiveId);
-        if (nextProfile?.workspacePath) {
-          window.location.href = "/";
+      if (!onProfileDeleted) {
+        const profilesRes = await fetch("/api/profiles");
+        const data = await profilesRes.json();
+        const remainingProfiles = (data.profiles || []) as UserProfile[];
+        const nextActiveId = data.activeProfileId as string | null;
+
+        if (remainingProfiles.length > 0 && nextActiveId) {
+          const nextProfile = remainingProfiles.find((p) => p.id === nextActiveId);
+          if (nextProfile?.workspacePath) {
+            window.location.href = "/";
+            return;
+          }
+          window.location.href = "/setup";
           return;
         }
-        window.location.href = "/setup";
-        return;
-      }
 
-      window.location.href = "/setup";
+        window.location.href = "/setup";
+      }
     } catch (e) {
       console.error(e);
       alert("Error deleting workspace connection.");
@@ -440,12 +483,17 @@ export default function WorkspaceSettingsView({
               textWrap: "balance",
             }}
           >
-            {embedded ? "Workspace" : "Workspace Settings"}
+            {embedded ? workspaceName || "Workspace" : "Workspace Settings"}
           </h2>
           <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px", textWrap: "pretty" }}>
             {diagnostics?.projectName
               ? `${diagnostics.projectName} · v${diagnostics.projectVersion}`
               : "Repository path, git behavior, and development server configuration."}
+            {isActive && (
+              <span style={{ marginLeft: "6px", color: "var(--color-success-fg)", fontWeight: 600 }}>
+                · Active workspace
+              </span>
+            )}
           </p>
         </div>
         <button
@@ -560,18 +608,51 @@ export default function WorkspaceSettingsView({
                   className="material-symbols-outlined"
                   style={{
                     fontSize: "16px",
-                    color: activeProfile?.hasGitToken ? "var(--color-success-fg)" : "var(--color-fg-muted)",
+                    color: profile.hasGitToken ? "var(--color-success-fg)" : "var(--color-fg-muted)",
                   }}
                 >
-                  {activeProfile?.hasGitToken ? "link" : "link_off"}
+                  {profile.hasGitToken ? "link" : "link_off"}
                 </span>
-                {activeProfile?.hasGitToken ? "Connected" : "Not connected"}
+                {profile.hasGitToken ? "Connected" : "Not connected"}
                 <span style={{ ...hintStyle, marginLeft: "auto" }}>
                   {workspaceType === "automatic" ? "Cloned from GitHub" : "Local folder"}
                 </span>
               </div>
             </div>
           </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={labelStyle} htmlFor="workspace-git-name">
+                Git author name
+              </label>
+              <input
+                id="workspace-git-name"
+                type="text"
+                className="form-control"
+                value={gitAuthorName}
+                onChange={(e) => setGitAuthorName(e.target.value)}
+                placeholder="John Doe"
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label style={labelStyle} htmlFor="workspace-git-email">
+                Git author email
+              </label>
+              <input
+                id="workspace-git-email"
+                type="email"
+                className="form-control"
+                value={gitAuthorEmail}
+                onChange={(e) => setGitAuthorEmail(e.target.value)}
+                placeholder="john@example.com"
+              />
+            </div>
+          </div>
+          <span style={hintStyle}>
+            Loaded from this repository&apos;s git configuration. Falls back to your global git config when unset.
+          </span>
         </div>
 
         <div className="card" style={cardStyle}>
@@ -640,7 +721,7 @@ export default function WorkspaceSettingsView({
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              disabled={isFetching || !activeProfile?.hasGitToken}
+              disabled={isFetching || !profile.hasGitToken}
               onClick={handleFetchNow}
             >
               {isFetching ? "Fetching…" : "Fetch now"}
