@@ -112,7 +112,6 @@ function startNextServer() {
 
   const sharedEnv = augmentProcessEnv({
     ...process.env,
-    PORT: PORT.toString(),
     HOSTNAME: "127.0.0.1",
     NEXT_PUBLIC_OMNISYNC_PORT: PORT.toString(),
     OMNISYNC_API_TOKEN: apiToken,
@@ -121,13 +120,17 @@ function startNextServer() {
   });
 
   if (isDev) {
+    delete sharedEnv.PORT;
     const npxCmd = process.platform === "win32" ? "npx.cmd" : "npx";
+    // Dev: bind via -p only — do not set generic PORT (other Next apps inherit it from the shell).
     nextProcess = spawn(npxCmd, ["next", "dev", "-p", PORT.toString()], {
       cwd: appRoot,
       env: sharedEnv,
       shell: process.platform === "win32",
     });
   } else {
+    // Production standalone server.js reads PORT; scoped to this child process only.
+    sharedEnv.PORT = PORT.toString();
     const standaloneDir = getStandaloneDir();
     const serverScript = path.join(standaloneDir, "server.js");
 
