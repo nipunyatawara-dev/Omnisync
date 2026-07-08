@@ -47,18 +47,30 @@ export function useGitSync(showNotification: (msg: string, type?: "info" | "succ
     try {
       const res = await fetch("/api/workspace/git?action=branches");
       const data = await res.json();
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load branches", "error");
+        return;
+      }
       if (data.branches) setBranches(data.branches);
       if (data.current) setCurrentBranch(data.current);
-    } catch {}
-  }, []);
+    } catch {
+      showNotification("Failed to load branches", "error");
+    }
+  }, [showNotification]);
 
   const loadConflictFiles = useCallback(async () => {
     try {
       const res = await fetch("/api/workspace/git?action=conflicts");
       const data = await res.json();
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load conflict files", "error");
+        return;
+      }
       setConflictFiles((data.conflicts as string[]) || []);
-    } catch {}
-  }, []);
+    } catch {
+      showNotification("Failed to load conflict files", "error");
+    }
+  }, [showNotification]);
 
   const handleGitSync = useCallback(
     async (action: "fetch" | "pull" | "push", onSuccess?: () => void) => {

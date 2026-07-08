@@ -4,8 +4,9 @@
 
 # OmniSync
 
-[![Version](https://img.shields.io/badge/version-0.1b-blue)](https://github.com/nipunyatawara-dev/Omnisync)
-[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://github.com/nipunyatawara-dev/Omnisync)
+[![Version](https://img.shields.io/badge/version-0.2b-blue)](https://github.com/nipunyatawara-dev/Omnisync)
+[![CI](https://github.com/nipunyatawara-dev/Omnisync/actions/workflows/ci.yml/badge.svg)](https://github.com/nipunyatawara-dev/Omnisync/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%20(first)-lightgrey)](https://github.com/nipunyatawara-dev/Omnisync)
 [![Stack](https://img.shields.io/badge/stack-Electron%20%2B%20Next.js-green)](https://github.com/nipunyatawara-dev/Omnisync)
 
 ---
@@ -174,6 +175,10 @@ Electron shell (main.js)
 **Security model:** Electron generates a per-session API token and encryption secret. Middleware requires a matching HttpOnly cookie on `/api/*` from localhost only. Profile tokens are encrypted at rest with AES-256-GCM.
 
 **Data flow (git sync):** UI → `POST /api/workspace/git` → `src/lib/git.ts` → system `git` binary → JSON response → dashboard state via `useGitSync` hook.
+
+# Platform support
+
+OmniSync is **macOS-first**: IDE launch, folder permissions, and dock integration are optimized for macOS. Windows and Linux builds are supported via electron-builder, and `src/lib/platformLaunch.ts` includes cross-platform paths, but those targets receive less testing. Unsigned macOS builds may require right-click → Open on first launch.
 
 # Contributing
 

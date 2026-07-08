@@ -21,7 +21,9 @@ export async function getGlobalSettings(): Promise<GlobalSettings> {
   try {
     await ensureDir();
     const raw = await fs.readFile(SETTINGS_FILE, "utf-8");
-    return { ...DEFAULT_GLOBAL_SETTINGS, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    delete parsed.enableTelemetry;
+    return { ...DEFAULT_GLOBAL_SETTINGS, ...parsed };
   } catch (error: unknown) {
     const err = error as { code?: string };
     if (err?.code === "ENOENT") {

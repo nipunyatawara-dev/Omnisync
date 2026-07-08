@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile } from "@/lib/profiles";
+import { resolveWorkspaceCwd } from "@/lib/workspaceAccess";
+import { log } from "@/lib/logger";
 import { promises as fs } from "fs";
 import path from "path";
 import { getRunnerLogs } from "@/lib/runner";
@@ -73,15 +75,13 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const { type, port, ide, workspacePath } = await request.json();
-    let cwd = typeof workspacePath === "string" ? workspacePath : undefined;
-
-    if (!cwd) {
-      const profile = await getActiveProfile();
-      if (!profile?.workspacePath) {
-        return NextResponse.json({ error: "No workspace path" }, { status: 400 });
-      }
-      cwd = profile.workspacePath;
+    const requested =
+      typeof workspacePath === "string" ? workspacePath : undefined;
+    const resolved = await resolveWorkspaceCwd(requested);
+    if ("error" in resolved) {
+      return NextResponse.json({ error: resolved.error }, { status: resolved.status });
     }
+    const cwd = resolved.cwd;
 
     if (type === "folder") {
       await openPath(cwd);
@@ -155,7 +155,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid launch type" }, { status: 400 });
   } catch (err: unknown) {
-    console.error("[launch] failed:", err);
+    log.error("launch", "failed", { err: String(err) });
     const msg = err instanceof Error ? err.message : "Launch failed";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

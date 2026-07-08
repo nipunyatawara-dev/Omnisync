@@ -10,7 +10,9 @@ if (!serverToken) {
     const array = new Uint8Array(32);
     crypto.getRandomValues(array);
     globalRef.omnisyncServerToken = Array.from(array, byte => byte.toString(16).padStart(2, "0")).join("");
-    console.log(`[OmniSync] Generated standalone API Token: ${globalRef.omnisyncServerToken}`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[OmniSync] Generated standalone API token (not logged)");
+    }
   }
   serverToken = globalRef.omnisyncServerToken;
 }

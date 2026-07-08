@@ -9,7 +9,6 @@ export function syncGlobalSettingsToLocalStorage(settings: GlobalSettings) {
   localStorage.setItem("omnisync_global_auto_fetch_interval", settings.autoFetchInterval || "5");
   localStorage.setItem("omnisync_global_terminal_shell", settings.terminalShell || "zsh");
   localStorage.setItem("omnisync_global_show_hidden", String(!!settings.showHiddenFiles));
-  localStorage.setItem("omnisync_global_telemetry", String(settings.enableTelemetry !== false));
   localStorage.setItem("omnisync_global_accent", settings.accentColor || "default");
 }
 
@@ -23,7 +22,6 @@ export function readGlobalSettingsFromLocalStorage(): GlobalSettings {
     autoFetchInterval: localStorage.getItem("omnisync_global_auto_fetch_interval") || "5",
     terminalShell: localStorage.getItem("omnisync_global_terminal_shell") || "zsh",
     showHiddenFiles: localStorage.getItem("omnisync_global_show_hidden") !== "false",
-    enableTelemetry: localStorage.getItem("omnisync_global_telemetry") !== "false",
     accentColor: (localStorage.getItem("omnisync_global_accent") || "default") as AccentColor,
   };
 }

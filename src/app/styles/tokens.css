@@ -1,0 +1,215 @@
+@theme {
+  --color-surface-dim: var(--color-bg-default);
+  --color-primary: var(--color-success-fg);
+  --color-surface-container-lowest: var(--color-bg-default);
+  --color-surface-container-low: var(--color-bg-subtle);
+  --color-secondary: var(--color-btn-bg);
+  --color-on-background: var(--color-fg-default);
+  --color-surface-variant: var(--color-bg-active);
+  --color-surface-container-highest: var(--color-bg-active);
+  --color-outline: var(--color-border-active);
+  --color-secondary-container: var(--color-accent-fg);
+  --color-on-secondary: var(--color-btn-text);
+  --color-on-primary: #ffffff;
+  --color-inverse-on-surface: var(--color-bg-default);
+  --color-inverse-primary: var(--color-btn-primary-bg);
+  --color-on-surface: var(--color-fg-default);
+  --color-surface-container-high: var(--color-bg-active);
+  --color-surface: var(--color-bg-subtle);
+  --color-outline-variant: var(--color-border-default);
+  --color-surface-container: var(--color-bg-subtle);
+  --color-primary-container: var(--color-btn-primary-bg);
+  --color-on-primary-container: #ffffff;
+  --color-background: var(--color-bg-default);
+  --color-on-surface-variant: var(--color-fg-muted);
+
+  --font-headline-sm: "Geist", sans-serif;
+  --font-body-lg: "Geist", sans-serif;
+  --font-headline-lg: "Geist", sans-serif;
+  --font-label-mono: "JetBrains Mono", monospace;
+  --font-button-text: "Geist", sans-serif;
+  --font-body-md: "Geist", sans-serif;
+  --font-headline-md: "Geist", sans-serif;
+
+  --text-headline-sm: 20px;
+  --text-headline-sm--line-height: 1.4;
+  --text-headline-sm--font-weight: 500;
+  
+  --text-body-lg: 16px;
+  --text-body-lg--line-height: 1.5;
+  --text-body-lg--font-weight: 400;
+
+  --text-headline-lg: 32px;
+  --text-headline-lg--line-height: 1.25;
+  --text-headline-lg--letter-spacing: -0.02em;
+  --text-headline-lg--font-weight: 600;
+
+  --text-label-mono: 12px;
+  --text-label-mono--line-height: 1.4;
+  --text-label-mono--letter-spacing: 0.01em;
+  --text-label-mono--font-weight: 400;
+
+  --text-button-text: 14px;
+  --text-button-text--line-height: 1.2;
+  --text-button-text--font-weight: 500;
+
+  --text-body-md: 14px;
+  --text-body-md--line-height: 1.5;
+  --text-body-md--font-weight: 400;
+
+  --text-headline-md: 24px;
+  --text-headline-md--line-height: 1.3;
+  --text-headline-md--font-weight: 600;
+
+  --spacing-base: 4px;
+  --spacing-xl: 40px;
+  --spacing-container-max: 1280px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-gutter: 16px;
+  --spacing-xs: 4px;
+}
+
+/* OmniSync Global Styles - GitHub Design System Theme */
+
+:root {
+  /* Dark Mode (Default) Color Tokens */
+  --color-bg-default: #0d1117;
+  --color-bg-subtle: #161b22;
+  --color-bg-overlay: #161b22;
+  --color-bg-active: #21262d;
+  
+  --color-border-default: #30363d;
+  --color-border-muted: #21262d;
+  --color-border-active: #8b949e;
+  
+  --color-fg-default: #c9d1d9;
+  --color-fg-muted: #8b949e;
+  --color-fg-subtle: #484f58;
+  
+  --color-accent-fg: #58a6ff;
+  --color-accent-bg: rgba(56, 139, 253, 0.1);
+  --color-accent-border: rgba(56, 139, 253, 0.4);
+  --color-dot-on: var(--color-accent-fg);
+  
+  --color-success-fg: #3fb950;
+  --color-success-bg: rgba(46, 160, 67, 0.15);
+  --color-success-border: rgba(46, 160, 67, 0.4);
+  
+  --color-danger-fg: #f85149;
+  --color-danger-bg: rgba(248, 81, 73, 0.1);
+  --color-danger-border: rgba(248, 81, 73, 0.4);
+  
+  --color-attention-fg: #d29922;
+  --color-attention-bg: rgba(187, 128, 9, 0.1);
+  --color-attention-border: rgba(187, 128, 9, 0.4);
+  
+  --color-btn-bg: #21262d;
+  --color-btn-text: #c9d1d9;
+  --color-btn-border: #30363d;
+  --color-btn-hover-bg: #30363d;
+  --color-btn-hover-border: #8b949e;
+  
+  --color-btn-primary-bg: #238636;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-primary-border: #2ea44f;
+  --color-btn-primary-hover-bg: #2ea44f;
+  
+  --color-header-bg: #161b22;
+  --color-header-text: #f0f6fc;
+  
+  --color-diff-added-bg: rgba(46, 160, 67, 0.15);
+  --color-diff-added-line: #2ea44f;
+  --color-diff-removed-bg: rgba(248, 81, 73, 0.15);
+  --color-diff-removed-line: #da3633;
+  --color-diff-neutral-bg: transparent;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace;
+}
+
+[data-theme="light"] {
+  /* Light Mode Color Tokens */
+  --color-bg-default: #ffffff;
+  --color-bg-subtle: #f6f8fa;
+  --color-bg-overlay: #ffffff;
+  --color-bg-active: #eaeef2;
+  
+  --color-border-default: #d0d7de;
+  --color-border-muted: #d8dee4;
+  --color-border-active: #57606a;
+  
+  --color-fg-default: #24292f;
+  --color-fg-muted: #57606a;
+  --color-fg-subtle: #6e7781;
+  
+  --color-accent-fg: #0969da;
+  --color-accent-bg: rgba(9, 105, 218, 0.1);
+  --color-accent-border: rgba(9, 105, 218, 0.4);
+  --color-dot-on: var(--color-accent-fg);
+  
+  --color-success-fg: #1a7f37;
+  --color-success-bg: rgba(26, 127, 55, 0.15);
+  --color-success-border: rgba(26, 127, 55, 0.4);
+  
+  --color-danger-fg: #cf222e;
+  --color-danger-bg: rgba(207, 34, 46, 0.1);
+  --color-danger-border: rgba(207, 34, 46, 0.4);
+  
+  --color-attention-fg: #9a6700;
+  --color-attention-bg: rgba(154, 103, 0, 0.1);
+  --color-attention-border: rgba(154, 103, 0, 0.4);
+  
+  --color-btn-bg: #f6f8fa;
+  --color-btn-text: #24292f;
+  --color-btn-border: rgba(27, 31, 36, 0.15);
+  --color-btn-hover-bg: #f3f4f6;
+  --color-btn-hover-border: rgba(27, 31, 36, 0.15);
+  
+  --color-btn-primary-bg: #2da44f;
+  --color-btn-primary-text: #ffffff;
+  --color-btn-primary-border: rgba(27, 31, 36, 0.15);
+  --color-btn-primary-hover-bg: #2c974b;
+  
+  --color-header-bg: #24292f;
+  --color-header-text: #ffffff;
+  
+  --color-diff-added-bg: #e6ffec;
+  --color-diff-added-line: #2da44f;
+  --color-diff-removed-bg: #ffebe9;
+  --color-diff-removed-line: #cf222e;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--color-bg-default);
+  color: var(--color-fg-default);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  height: 100vh;
+  overflow: hidden;
+}
+
+input, select, textarea, button {
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* Scrollbars — hidden globally, scroll still works */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

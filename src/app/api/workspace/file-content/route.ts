@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { promises as fs } from "fs";
 import { getActiveProfile } from "@/lib/profiles";
 import { resolveSafePath, PathAccessError } from "@/lib/pathSafety";
+import { exceedsReadLimit, exceedsWriteLimit } from "@/lib/fileLimits";
+import { log } from "@/lib/logger";
 
 export async function GET(request: Request) {
   const profile = await getActiveProfile();
@@ -17,13 +19,17 @@ export async function GET(request: Request) {
 
   try {
     const realPath = await resolveSafePath(profile.workspacePath, relativeFile);
+    const stat = await fs.stat(realPath);
+    if (exceedsReadLimit(stat.size)) {
+      return NextResponse.json({ error: "File exceeds maximum read size (2 MB)" }, { status: 413 });
+    }
     const content = await fs.readFile(realPath, "utf-8");
     return NextResponse.json({ content });
   } catch (err: unknown) {
     if (err instanceof PathAccessError) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
-    console.error("[file-content] read failed:", err);
+    log.error("file-content", "read failed", { err: String(err) });
     return NextResponse.json({ error: "Failed to read file" }, { status: 500 });
   }
 }
@@ -39,6 +45,12 @@ export async function POST(request: Request) {
     if (!file) {
       return NextResponse.json({ error: "File parameter missing" }, { status: 400 });
     }
+    if (typeof content !== "string") {
+      return NextResponse.json({ error: "Content must be a string" }, { status: 400 });
+    }
+    if (exceedsWriteLimit(content)) {
+      return NextResponse.json({ error: "Content exceeds maximum write size (2 MB)" }, { status: 413 });
+    }
 
     const realPath = await resolveSafePath(profile.workspacePath, file);
     await fs.writeFile(realPath, content, "utf-8");
@@ -47,7 +59,7 @@ export async function POST(request: Request) {
     if (err instanceof PathAccessError) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
-    console.error("[file-content] write failed:", err);
+    log.error("file-content", "write failed", { err: String(err) });
     return NextResponse.json({ error: "Failed to write file" }, { status: 500 });
   }
 }

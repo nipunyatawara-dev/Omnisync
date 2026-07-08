@@ -8,7 +8,6 @@ export interface GlobalSettings {
   autoFetchInterval: string;
   terminalShell: string;
   showHiddenFiles: boolean;
-  enableTelemetry: boolean;
   accentColor: AccentColor;
 }
 
@@ -19,7 +18,6 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
   autoFetchInterval: "5",
   terminalShell: "zsh",
   showHiddenFiles: true,
-  enableTelemetry: true,
   accentColor: "default",
 };
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getGlobalSettings, hasPersistedGlobalSettings, saveGlobalSettings, type GlobalSettings } from "@/lib/globalSettings";
 import { getActiveProfile } from "@/lib/profiles";
 import { applyGitIdentity, getCurrentBranch, resolveGitIdentity } from "@/lib/git";
+import { log } from "@/lib/logger";
 
 async function hydrateGitSettings(settings: GlobalSettings): Promise<GlobalSettings> {
   const profile = await getActiveProfile();
@@ -39,7 +40,6 @@ export async function POST(request: Request) {
     if (typeof body.autoFetchInterval === "string") updates.autoFetchInterval = body.autoFetchInterval;
     if (typeof body.terminalShell === "string") updates.terminalShell = body.terminalShell;
     if (typeof body.showHiddenFiles === "boolean") updates.showHiddenFiles = body.showHiddenFiles;
-    if (typeof body.enableTelemetry === "boolean") updates.enableTelemetry = body.enableTelemetry;
     if (typeof body.accentColor === "string") updates.accentColor = body.accentColor;
 
     const settings = await saveGlobalSettings(updates);
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, settings });
   } catch (error: unknown) {
-    console.error("[settings] save failed:", error);
+    log.error("settings", "save failed", { err: String(error) });
     return NextResponse.json({ error: "Failed to save settings" }, { status: 500 });
   }
 }
