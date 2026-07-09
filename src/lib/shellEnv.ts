@@ -2,9 +2,11 @@ import { createRequire } from "node:module";
 import type { ChildProcess, SpawnOptions } from "child_process";
 import path from "node:path";
 
+type EnvMap = Record<string, string | undefined>;
+
 type ShellEnvModule = {
   getLoginShellPath: () => string;
-  augmentProcessEnv: (base?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+  augmentProcessEnv: (base?: EnvMap) => NodeJS.ProcessEnv;
   resolveCommand: (name: string) => string;
   spawnLoginCommand: (commandLine: string, options?: SpawnOptions) => ChildProcess;
   spawnTool: (name: string, args: string[], options?: SpawnOptions) => ChildProcess;
@@ -25,7 +27,7 @@ export function getLoginShellPath(): string {
   return loadShellEnv().getLoginShellPath();
 }
 
-export function augmentProcessEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+export function augmentProcessEnv(base: EnvMap = process.env): NodeJS.ProcessEnv {
   return loadShellEnv().augmentProcessEnv(base);
 }
 

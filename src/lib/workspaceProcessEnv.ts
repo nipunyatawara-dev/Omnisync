@@ -35,30 +35,30 @@ export function buildWorkspaceChildEnv(
   cwd: string,
   options: { port?: number; mode?: WorkspaceEnvMode } = {}
 ): NodeJS.ProcessEnv {
-  const cleaned: NodeJS.ProcessEnv = {};
+  const cleaned: Record<string, string | undefined> = {};
 
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined || shouldStripWorkspaceEnvKey(key)) continue;
     cleaned[key] = value;
   }
 
-  const env = augmentProcessEnv({
+  const base: Record<string, string | undefined> = {
     ...cleaned,
     PWD: cwd,
     FORCE_COLOR: cleaned.FORCE_COLOR ?? "1",
-  });
+  };
 
   if (options.port && options.port > 0) {
-    env.PORT = String(options.port);
+    base.PORT = String(options.port);
   }
 
   if (options.mode === "development") {
-    env.NODE_ENV = "development";
+    base.NODE_ENV = "development";
   } else if (options.mode === "production") {
-    env.NODE_ENV = "production";
+    base.NODE_ENV = "production";
   }
 
-  return env;
+  return augmentProcessEnv(base);
 }
 
 export function workspaceEnvModeForRunCommand(runCommand: string): WorkspaceEnvMode {
