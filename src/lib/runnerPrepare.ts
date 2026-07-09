@@ -1,8 +1,8 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { spawnLoginCommand } from "@/lib/shellEnv";
-import { augmentProcessEnv } from "@/lib/shellEnv";
 import { resolveDependencyInstallArgs } from "@/lib/npmInstall";
+import { buildWorkspaceChildEnv } from "@/lib/workspaceProcessEnv";
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -31,7 +31,7 @@ export async function runShellCommand(
   return new Promise((resolve, reject) => {
     const child = spawnLoginCommand(command, {
       cwd,
-      env: augmentProcessEnv({ ...process.env, FORCE_COLOR: "1" }),
+      env: buildWorkspaceChildEnv(cwd, { mode: "production" }),
     });
 
     const handleData = (data: Buffer, isError = false) => {

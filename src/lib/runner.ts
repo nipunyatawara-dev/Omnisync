@@ -3,6 +3,10 @@ import { augmentProcessEnv, spawnLoginCommand } from "@/lib/shellEnv";
 import { stripTerminalEscapeSequences } from "@/lib/npmInstall";
 import { prepareWorkspaceForRunner } from "@/lib/runnerPrepare";
 import { appendTerminalLine, logTerminalCommand } from "@/lib/dashboardTerminal";
+import {
+  buildWorkspaceChildEnv,
+  workspaceEnvModeForRunCommand,
+} from "@/lib/workspaceProcessEnv";
 
 export interface RunnerStartOptions {
   runCommand?: string;
@@ -91,7 +95,10 @@ export async function startRunner(cwd: string, options: RunnerStartOptions = {})
 
     const child = spawnLoginCommand(runCommand, {
       cwd,
-      env: augmentProcessEnv({ ...process.env, PORT: String(port), FORCE_COLOR: "1" }),
+      env: buildWorkspaceChildEnv(cwd, {
+        port,
+        mode: workspaceEnvModeForRunCommand(runCommand),
+      }),
     });
 
     state.childProcess = child;

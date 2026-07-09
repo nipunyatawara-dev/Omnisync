@@ -1,8 +1,9 @@
 import { ChildProcess } from "child_process";
 import path from "path";
 import os from "os";
-import { augmentProcessEnv, spawnLoginCommand } from "@/lib/shellEnv";
+import { spawnLoginCommand } from "@/lib/shellEnv";
 import { stripTerminalEscapeSequences } from "@/lib/npmInstall";
+import { buildWorkspaceChildEnv } from "@/lib/workspaceProcessEnv";
 
 export type TerminalLineKind = "command" | "output" | "error" | "system";
 
@@ -110,7 +111,7 @@ export async function runManualTerminalCommand(cwd: string, command: string): Pr
   return new Promise((resolve) => {
     const child = spawnLoginCommand(trimmed, {
       cwd,
-      env: augmentProcessEnv({ ...process.env, FORCE_COLOR: "1" }),
+      env: buildWorkspaceChildEnv(cwd, { mode: "inherit" }),
     });
 
     state.manualProcess = child;
