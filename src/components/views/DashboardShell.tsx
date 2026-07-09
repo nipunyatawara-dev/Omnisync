@@ -2,12 +2,32 @@
 
 import Loader from "@/components/Loader";
 import Tooltip from "@/components/Tooltip";
+import DashboardTerminal from "@/components/DashboardTerminal";
 import DependencyInstallModal, {
   type DependencyInstallModalState,
 } from "@/components/DependencyInstallModal";
 import type { UserProfile } from "@/lib/profiles";
 import type { DashboardTab } from "@/types/dashboard";
 import type { ToastType } from "@/hooks/useNotifications";
+import type { TerminalLine } from "@/lib/dashboardTerminal";
+
+interface DashboardTerminalBindings {
+  lines: TerminalLine[];
+  prompt: string;
+  input: string;
+  setInput: (value: string) => void;
+  height: number;
+  persistHeight: (value: number) => void;
+  isCollapsed: boolean;
+  toggleCollapsed: () => void;
+  isManualRunning: boolean;
+  isSubmitting: boolean;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  handleScroll: () => void;
+  submitCommand: () => void;
+  clearTerminal: () => void;
+  lineColor: (line: TerminalLine) => string;
+}
 
 interface DashboardShellProps {
   activeProfile: UserProfile | null;
@@ -23,6 +43,7 @@ interface DashboardShellProps {
   onOpenTour: () => void;
   onDismissTourButton: () => void;
   onSwitchWorkspace: () => void;
+  terminal: DashboardTerminalBindings;
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -41,6 +62,7 @@ export default function DashboardShell({
   onOpenTour,
   onDismissTourButton,
   onSwitchWorkspace,
+  terminal,
   children,
   footer,
 }: DashboardShellProps) {
@@ -277,7 +299,26 @@ export default function DashboardShell({
         </nav>
 
         <main className="content-pane">
-          {children}
+          <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {children}
+          </div>
+          <DashboardTerminal
+            lines={terminal.lines}
+            prompt={terminal.prompt}
+            input={terminal.input}
+            setInput={terminal.setInput}
+            height={terminal.height}
+            persistHeight={terminal.persistHeight}
+            isCollapsed={terminal.isCollapsed}
+            toggleCollapsed={terminal.toggleCollapsed}
+            isManualRunning={terminal.isManualRunning}
+            isSubmitting={terminal.isSubmitting}
+            scrollRef={terminal.scrollRef}
+            onScroll={terminal.handleScroll}
+            onSubmit={terminal.submitCommand}
+            onClear={terminal.clearTerminal}
+            lineColor={terminal.lineColor}
+          />
         </main>
       </div>
 

@@ -17,6 +17,7 @@ import { useWorkspaceFiles } from "@/hooks/useWorkspaceFiles";
 import { useRunner } from "@/hooks/useRunner";
 import { useDiagnostics } from "@/hooks/useDiagnostics";
 import { useTimeline } from "@/hooks/useTimeline";
+import { useDashboardTerminal } from "@/hooks/useDashboardTerminal";
 import type { DashboardTab, DiagnosticDetails } from "@/types/dashboard";
 
 export default function DashboardPage() {
@@ -62,6 +63,8 @@ export default function DashboardPage() {
   const runner = useRunner(showNotification, activeProfile);
 
   const timeline = useTimeline();
+
+  const dashboardTerminal = useDashboardTerminal();
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -188,6 +191,7 @@ export default function DashboardPage() {
       onOpenTour={() => setTourOpen(true)}
       onDismissTourButton={handleDismissTourButton}
       onSwitchWorkspace={() => router.push("/setup")}
+      terminal={dashboardTerminal}
       footer={
         <ProductTour
           activeTab={activeTab}

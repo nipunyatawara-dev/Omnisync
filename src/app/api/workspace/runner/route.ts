@@ -29,11 +29,13 @@ export async function POST(request: Request) {
     const { action } = await request.json();
     const global = await getGlobalSettings();
     const runCommand = profile.runCommand || "npm run dev";
+    const buildCommand = profile.buildCommand || "npm run build";
     const port = profile.port && profile.port > 0 ? profile.port : 3000;
 
     if (action === "start") {
-      const status = startRunner(profile.workspacePath, {
+      const status = await startRunner(profile.workspacePath, {
         runCommand,
+        buildCommand,
         port,
         shell: global.terminalShell,
       });

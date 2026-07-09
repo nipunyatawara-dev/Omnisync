@@ -12,6 +12,12 @@ import {
   stripTerminalEscapeSequences,
 } from "@/lib/npmInstall";
 import { augmentProcessEnv, spawnTool } from "@/lib/shellEnv";
+import {
+  appendTerminalLine,
+  buildTerminalPrompt,
+  logTerminalCommand,
+  setTerminalPrompt,
+} from "@/lib/dashboardTerminal";
 
 const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
@@ -194,10 +200,14 @@ export async function POST(request: Request) {
 
     const customStream = new ReadableStream({
       async start(controller) {
+        setTerminalPrompt(buildTerminalPrompt(cwd));
+        logTerminalCommand(`${cmd} ${args.join(" ")}`, "diagnostics");
+
         const sendLog = (message: string) => {
           const stripped = stripTerminalEscapeSequences(message);
           const clean = sanitizeNpmInstallLogLine(stripped);
           if (clean === null) return;
+          appendTerminalLine(clean, "output");
           controller.enqueue(encoder.encode(JSON.stringify({ type: "log", message: clean }) + "\n"));
         };
 
@@ -205,6 +215,7 @@ export async function POST(request: Request) {
           const stripped = stripTerminalEscapeSequences(message);
           const clean = sanitizeNpmInstallLogLine(stripped) ?? stripped.trim();
           if (!clean) return;
+          appendTerminalLine(clean, "error");
           controller.enqueue(encoder.encode(JSON.stringify({ type: "error", message: clean }) + "\n"));
         };
 

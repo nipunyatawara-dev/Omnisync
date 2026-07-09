@@ -2,8 +2,10 @@
 
 import Loader from "@/components/Loader";
 import Tooltip from "@/components/Tooltip";
+import ContributionHeatmap from "@/components/ContributionHeatmap";
 import type { RepoCommit } from "@/types/dashboard";
 import { MONTH_NAMES } from "@/types/dashboard";
+import { useMemo } from "react";
 
 interface TimelineViewProps {
   allCommits: RepoCommit[];
@@ -48,6 +50,35 @@ export default function TimelineView({
   handleSquareClick,
   getContributionColor,
 }: TimelineViewProps) {
+  const heatmapCells = useMemo(() => {
+    return contributionDays.map((date, idx) => {
+      const colIdx = Math.floor(idx / 7);
+      const dayOfWeek = date.getDay();
+      const dateString = formatLocalDate(date);
+      const isSameYear = date.getFullYear() === calendarYear;
+      const count = isSameYear ? (commitCountsByDate[dateString] || 0) : 0;
+
+      return {
+        key: `dot-${idx}`,
+        colIdx,
+        rowIdx: dayOfWeek,
+        dateString,
+        date,
+        count,
+        color: getContributionColor(count),
+        isSelected: selectedCalendarDate === dateString,
+        isPlaceholder: !isSameYear,
+      };
+    });
+  }, [
+    contributionDays,
+    calendarYear,
+    commitCountsByDate,
+    selectedCalendarDate,
+    formatLocalDate,
+    getContributionColor,
+  ]);
+
   return (
     <div
       id="tour-timeline-panel"
@@ -159,88 +190,12 @@ export default function TimelineView({
 
             {isYearlyCalendarExpanded && (
               <>
-                <div style={{ overflowX: "auto", paddingBottom: "4px", width: "100%" }}>
-                  <div style={{
-                    minWidth: "max-content",
-                    display: "grid",
-                    gridTemplateColumns: `24px repeat(${Math.ceil(contributionDays.length / 7)}, 10px)`,
-                    gridTemplateRows: "15px repeat(7, 10px)",
-                    gap: "2px",
-                    fontSize: "9px",
-                    color: "var(--color-fg-muted)"
-                  }}>
-                    {monthLabels.map((lbl, idx) => (
-                      <span
-                        key={`month-${idx}`}
-                        style={{
-                          gridColumnStart: lbl.colIdx + 2,
-                          gridColumnEnd: "span 4",
-                          gridRowStart: 1,
-                          whiteSpace: "nowrap",
-                          alignSelf: "end",
-                          paddingBottom: "2px"
-                        }}
-                      >
-                        {lbl.text}
-                      </span>
-                    ))}
-
-                    <div style={{ gridColumnStart: 1, gridRowStart: 3, textAlign: "right", lineHeight: "10px", paddingRight: "6px" }}>Mon</div>
-                    <div style={{ gridColumnStart: 1, gridRowStart: 5, textAlign: "right", lineHeight: "10px", paddingRight: "6px" }}>Wed</div>
-                    <div style={{ gridColumnStart: 1, gridRowStart: 7, textAlign: "right", lineHeight: "10px", paddingRight: "6px" }}>Fri</div>
-
-                    {contributionDays.map((date, idx) => {
-                      const colIdx = Math.floor(idx / 7);
-                      const dayOfWeek = date.getDay();
-                      const dateString = formatLocalDate(date);
-                      const isSameYear = date.getFullYear() === calendarYear;
-                      const count = isSameYear ? (commitCountsByDate[dateString] || 0) : 0;
-                      const isSelected = selectedCalendarDate === dateString;
-                      const color = getContributionColor(count);
-
-                      if (!isSameYear) {
-                        return (
-                          <div
-                            key={`dot-${idx}`}
-                            style={{
-                              gridColumnStart: colIdx + 2,
-                              gridRowStart: dayOfWeek + 2,
-                              width: "10px",
-                              height: "10px",
-                              backgroundColor: "transparent",
-                              pointerEvents: "none"
-                            }}
-                          />
-                        );
-                      }
-
-                      return (
-                        <Tooltip
-                          key={`dot-${idx}`}
-                          content={`${count} commit${count === 1 ? "" : "s"} on ${date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`}
-                          position="top"
-                        >
-                          <div
-                            onClick={() => handleSquareClick(dateString, date)}
-                            style={{
-                              gridColumnStart: colIdx + 2,
-                              gridRowStart: dayOfWeek + 2,
-                              width: "10px",
-                              height: "10px",
-                              borderRadius: "2px",
-                              backgroundColor: color,
-                              cursor: "pointer",
-                              transition: "transform 0.1s ease, box-shadow 0.1s ease",
-                              boxShadow: isSelected ? "0 0 0 1.5px var(--color-accent-fg)" : "none",
-                              zIndex: isSelected ? 2 : 1,
-                            }}
-                            className="contribution-square"
-                          />
-                        </Tooltip>
-                      );
-                    })}
-                  </div>
-                </div>
+                <ContributionHeatmap
+                  cells={heatmapCells}
+                  numCols={Math.ceil(contributionDays.length / 7)}
+                  monthLabels={monthLabels}
+                  onCellClick={handleSquareClick}
+                />
 
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "4px", borderTop: "1px solid var(--color-border-default)", paddingTop: "12px" }}>
                   <div style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>

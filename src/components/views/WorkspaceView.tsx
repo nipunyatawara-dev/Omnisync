@@ -67,6 +67,14 @@ export default function WorkspaceView({
   startResizeLeft,
   startResizeRight,
 }: WorkspaceViewProps) {
+  const serverPort =
+    runnerStatus?.port && runnerStatus.port > 0
+      ? runnerStatus.port
+      : activeProfile?.port && activeProfile.port > 0
+        ? activeProfile.port
+        : 3000;
+  const serverUrl = `http://localhost:${serverPort}`;
+
   return (
     <div className="animate-fade-slide" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       <div style={{
@@ -85,18 +93,20 @@ export default function WorkspaceView({
               onClick={onToggleRunner}
               disabled={isRunnerLoading}
               className={`btn ${runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? "btn-danger" : "btn-primary"}`}
-              style={{ minWidth: "120px" }}
+              style={{ minWidth: "120px", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
             >
               {isRunnerLoading ? (
                 <Loader size="xs" label="Starting runner" />
               ) : runnerStatus?.status === "running" || runnerStatus?.status === "starting" ? (
                 <>
-                  <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "white", marginRight: "4px" }}></span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                  </svg>
                   Stop Server
                 </>
               ) : (
                 <>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: "4px" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <polygon points="5 3 19 12 5 21 5 3" />
                   </svg>
                   Run Server
@@ -106,7 +116,11 @@ export default function WorkspaceView({
           </Tooltip>
 
           <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", display: "flex", alignItems: "center", gap: "8px" }}>
-            {runnerStatus?.status === "running" && <span style={{ color: "var(--color-success-fg)", fontWeight: 600 }}>Active (PID: {runnerStatus?.pid})</span>}
+            {runnerStatus?.status === "running" && (
+              <span style={{ color: "var(--color-success-fg)", fontWeight: 600 }}>
+                Active (PID: {runnerStatus?.pid}) · {serverUrl}
+              </span>
+            )}
             {runnerStatus?.status === "starting" && <span style={{ color: "var(--color-attention-fg)" }}>Starting...</span>}
             {runnerStatus?.status === "stopped" && <span>Dev Server Stopped</span>}
             {runnerStatus?.status === "error" && <span style={{ color: "var(--color-danger-fg)" }}>Error: {runnerStatus?.error}</span>}

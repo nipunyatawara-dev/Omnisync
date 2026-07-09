@@ -17,6 +17,22 @@ export function useRunner(
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  useEffect(() => {
+    async function loadRunnerStatus() {
+      try {
+        const res = await fetch("/api/workspace/runner");
+        const data = await res.json();
+        if (data?.status) {
+          setRunnerStatus(data.status as RunnerStatus);
+        }
+        if (data?.logs) {
+          setRunnerLogs((data.logs as string[]) || []);
+        }
+      } catch {}
+    }
+    loadRunnerStatus();
+  }, []);
+
   const loadLaunchOptions = async () => {
     try {
       const res = await fetch("/api/workspace/launch");

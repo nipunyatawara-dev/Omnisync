@@ -30,6 +30,12 @@ import {
   GitPullNotFastForwardError,
 } from "@/lib/git";
 import { resolveSafePath, PathAccessError } from "@/lib/pathSafety";
+import {
+  appendTerminalLine,
+  buildTerminalPrompt,
+  logTerminalCommand,
+  setTerminalPrompt,
+} from "@/lib/dashboardTerminal";
 
 async function ensureWorkspaceGitConfig(cwd: string) {
   const global = await getGlobalSettings();
@@ -92,6 +98,15 @@ async function syncResponse(cwd: string, defaultBranch: string) {
   const sync = await getSyncStatus(cwd, defaultBranch);
   const mergeState = await getMergeState(cwd);
   return { success: true, sync, mergeState };
+}
+
+function logGitTerminalCommand(cwd: string, command: string) {
+  setTerminalPrompt(buildTerminalPrompt(cwd));
+  logTerminalCommand(command, "git");
+}
+
+function logGitTerminalResult(message: string, isError = false) {
+  appendTerminalLine(message, isError ? "error" : "output");
 }
 
 export async function GET(request: Request) {
@@ -222,22 +237,30 @@ export async function POST(request: Request) {
     }
 
     if (action === "fetch") {
+      logGitTerminalCommand(cwd, "git fetch");
       await gitFetch(cwd, token);
+      logGitTerminalResult("git fetch completed.");
       return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
     if (action === "pull") {
+      logGitTerminalCommand(cwd, "git pull");
       await gitPull(cwd, token);
+      logGitTerminalResult("git pull completed.");
       return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
     if (action === "pull-merge") {
+      logGitTerminalCommand(cwd, "git pull --no-rebase");
       await gitPullMerge(cwd, token);
+      logGitTerminalResult("git pull (merge) completed.");
       return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
     if (action === "pull-rebase") {
+      logGitTerminalCommand(cwd, "git pull --rebase");
       await gitPullRebase(cwd, token);
+      logGitTerminalResult("git pull (rebase) completed.");
       return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
@@ -249,7 +272,9 @@ export async function POST(request: Request) {
           { status: 403 }
         );
       }
+      logGitTerminalCommand(cwd, "git push");
       await gitPush(cwd, token);
+      logGitTerminalResult("git push completed.");
       return NextResponse.json(await syncResponse(cwd, global.defaultBranch));
     }
 
@@ -319,6 +344,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Unknown branch" }, { status: 400 });
       }
 
+      logGitTerminalCommand(cwd, `git checkout ${branch}`);
+
       await new Promise<void>((resolve, reject) => {
         execFile("git", ["checkout", branch], { cwd, timeout: 15000 }, (err, _stdout, stderr) => {
           if (err) {
@@ -328,6 +355,8 @@ export async function POST(request: Request) {
           }
         });
       });
+
+      logGitTerminalResult(`Switched to branch '${branch}'.`);
 
       const current = await getCurrentBranch(cwd);
       return NextResponse.json({
@@ -339,6 +368,13 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err: unknown) {
+    const msg =
+      err instanceof GitCommandError
+        ? err.message
+        : err instanceof Error
+          ? err.message
+          : "Failed to perform git operation";
+    logGitTerminalResult(msg, true);
     return gitErrorResponse(err, "Failed to perform git operation");
   }
 }

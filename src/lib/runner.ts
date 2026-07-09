@@ -1,9 +1,12 @@
-import { spawn, ChildProcess } from "child_process";
-import { augmentProcessEnv } from "@/lib/shellEnv";
+import { ChildProcess } from "child_process";
+import { augmentProcessEnv, spawnLoginCommand } from "@/lib/shellEnv";
 import { stripTerminalEscapeSequences } from "@/lib/npmInstall";
+import { prepareWorkspaceForRunner } from "@/lib/runnerPrepare";
+import { appendTerminalLine, logTerminalCommand } from "@/lib/dashboardTerminal";
 
 export interface RunnerStartOptions {
   runCommand?: string;
+  buildCommand?: string;
   port?: number;
   shell?: string;
 }
@@ -43,31 +46,21 @@ if (!globalRef.runnerState) {
 
 const state = globalRef.runnerState;
 
-function resolveShell(explicit?: string): string | boolean {
-  if (process.platform === "win32") {
-    return true;
-  }
-  if (explicit === "bash") return "/bin/bash";
-  if (explicit === "sh") return "/bin/sh";
-  if (explicit === "zsh") return "/bin/zsh";
-  if (explicit) return explicit;
-  return "/bin/zsh";
-}
-
 // Append a log line with time stamp
 function appendLog(text: string) {
   const time = new Date().toLocaleTimeString();
   const cleanText = stripTerminalEscapeSequences(text);
   state.logs.push(`[${time}] ${cleanText}`);
-  // Cap at 1000 lines
   if (state.logs.length > 1000) {
     state.logs.shift();
   }
+  appendTerminalLine(cleanText, cleanText.includes("[ERROR]") ? "error" : "output");
 }
 
 // Start dev server in target directory
-export function startRunner(cwd: string, options: RunnerStartOptions = {}) {
+export async function startRunner(cwd: string, options: RunnerStartOptions = {}) {
   const runCommand = options.runCommand?.trim() || "npm run dev";
+  const buildCommand = options.buildCommand?.trim() || "npm run build";
   const port = options.port && options.port > 0 ? options.port : 3000;
 
   if (state.status === "running" || state.status === "starting") {
@@ -84,14 +77,20 @@ export function startRunner(cwd: string, options: RunnerStartOptions = {}) {
   state.port = port;
   state.error = undefined;
   state.logs = [];
+  logTerminalCommand(`run server → ${runCommand} (PORT=${port})`, "runner");
   appendLog(`Starting development server in directory: ${cwd}...`);
-  appendLog(`Executing: ${runCommand} (PORT=${port})`);
 
   try {
-    const shell = resolveShell(options.shell);
-    const child = spawn(runCommand, [], {
+    await prepareWorkspaceForRunner(cwd, {
+      runCommand,
+      buildCommand,
+      onLog: appendLog,
+    });
+
+    appendLog(`Executing: ${runCommand} (PORT=${port})`);
+
+    const child = spawnLoginCommand(runCommand, {
       cwd,
-      shell,
       env: augmentProcessEnv({ ...process.env, PORT: String(port), FORCE_COLOR: "1" }),
     });
 
@@ -119,15 +118,20 @@ export function startRunner(cwd: string, options: RunnerStartOptions = {}) {
     child.on("error", (err) => {
       state.status = "error";
       state.error = err.message;
+      state.childProcess = null;
       appendLog(`Failed to start child process: ${err.message}`);
     });
 
     child.on("close", (code) => {
-      state.status = "stopped";
       state.childProcess = null;
       appendLog(`Process exited with code ${code}`);
+      if (code !== 0 && code !== null) {
+        state.status = "error";
+        state.error = `Dev server exited with code ${code}`;
+      } else {
+        state.status = "stopped";
+      }
     });
-
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     state.status = "error";
@@ -147,6 +151,7 @@ export function stopRunner() {
   }
 
   appendLog("Stopping development server...");
+  logTerminalCommand("stop server", "runner");
   try {
     state.childProcess.kill("SIGTERM");
     
