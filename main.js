@@ -58,6 +58,8 @@ const { OMNISYNC_APP_PORT } = require("./appPort");
 
 let nextProcess = null;
 let mainWindow = null;
+let ipcHandlersRegistered = false;
+let isLaunchingWindow = false;
 const PORT = OMNISYNC_APP_PORT;
 const SERVER_URL = `http://localhost:${PORT}`;
 
@@ -103,6 +105,8 @@ function waitForServer(callback) {
 }
 
 function startNextServer() {
+  if (nextProcess) return;
+
   const isDev = !app.isPackaged;
   const appRoot = getAppRoot();
   const userDataDir = getUserDataDir();
@@ -163,6 +167,7 @@ function attachNextProcessLogs(processRef) {
   });
 
   processRef.on("exit", (code, signal) => {
+    nextProcess = null;
     if (code !== 0 && code !== null) {
       console.error(`Next.js server exited with code=${code} signal=${signal}`);
     }
@@ -177,58 +182,13 @@ function attachNextProcessLogs(processRef) {
   });
 }
 
-function createWindow() {
-  // The Content-Security-Policy is applied by the Next.js middleware (nonce-based
-  // in production) so that inline scripts can be locked down with a per-request nonce.
+function registerIpcHandlers() {
+  // ipcMain.handle throws (and Electron aborts with SIGTRAP) if the same channel
+  // is registered twice. Keep this outside createWindow — macOS activate/reopen
+  // recreates the window without quitting the process.
+  if (ipcHandlersRegistered) return;
+  ipcHandlersRegistered = true;
 
-  // Provision HttpOnly session cookie containing the API token for Same-Origin API requests
-  const cookie = {
-    url: SERVER_URL,
-    name: "omnisync_token",
-    value: apiToken,
-    domain: "localhost",
-    path: "/",
-    httpOnly: true,
-    sameSite: "strict",
-  };
-
-  session.defaultSession.cookies.set(cookie).then(() => {
-    console.log("Authentication cookie provisioned successfully.");
-  }).catch((err) => {
-    console.error("Failed to provision authentication cookie:", err);
-  });
-
-  const iconPath = getAppIconPath();
-
-  mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 850,
-    minWidth: 1000,
-    minHeight: 700,
-    ...(iconPath ? { icon: iconPath } : {}),
-    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
-    backgroundColor: "#0d1117",
-    show: false, // Don't show until ready-to-show
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: path.join(__dirname, "preload.js"),
-    },
-  });
-
-  // Set Dock icon on macOS
-  if (process.platform === "darwin" && iconPath) {
-    try {
-      const image = nativeImage.createFromPath(iconPath);
-      if (!image.isEmpty()) {
-        app.dock.setIcon(image);
-      }
-    } catch (err) {
-      console.error("Failed to set macOS dock icon:", err);
-    }
-  }
-
-  // Register Directory Picker IPC handler
   ipcMain.handle("select-directory", async () => {
     if (!mainWindow) return null;
     const result = await dialog.showOpenDialog(mainWindow, {
@@ -299,6 +259,64 @@ function createWindow() {
     await shell.openExternal(panes[pane] || panes["full-disk-access"]);
     return true;
   });
+}
+
+function createWindow() {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+    return;
+  }
+
+  // The Content-Security-Policy is applied by the Next.js middleware (nonce-based
+  // in production) so that inline scripts can be locked down with a per-request nonce.
+
+  // Provision HttpOnly session cookie containing the API token for Same-Origin API requests
+  const cookie = {
+    url: SERVER_URL,
+    name: "omnisync_token",
+    value: apiToken,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "strict",
+  };
+
+  session.defaultSession.cookies.set(cookie).then(() => {
+    console.log("Authentication cookie provisioned successfully.");
+  }).catch((err) => {
+    console.error("Failed to provision authentication cookie:", err);
+  });
+
+  const iconPath = getAppIconPath();
+
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 850,
+    minWidth: 1000,
+    minHeight: 700,
+    ...(iconPath ? { icon: iconPath } : {}),
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" } : {}),
+    backgroundColor: "#0d1117",
+    show: false, // Don't show until ready-to-show
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "preload.js"),
+    },
+  });
+
+  // Set Dock icon on macOS
+  if (process.platform === "darwin" && iconPath) {
+    try {
+      const image = nativeImage.createFromPath(iconPath);
+      if (!image.isEmpty()) {
+        app.dock.setIcon(image);
+      }
+    } catch (err) {
+      console.error("Failed to set macOS Dock icon:", err);
+    }
+  }
 
   // Open external links in user's default browser (crucial for GitHub Device Flow and PAT link)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -330,6 +348,27 @@ function createWindow() {
   });
 }
 
+function launchMainWindow() {
+  if (mainWindow || isLaunchingWindow) return;
+  isLaunchingWindow = true;
+
+  const finish = () => {
+    isLaunchingWindow = false;
+    createWindow();
+  };
+
+  // On macOS, closing the last window kills the Next.js server but keeps the app
+  // alive in the Dock. Reopen must restart the server before creating a window.
+  const req = http.get(SERVER_URL, () => {
+    req.destroy();
+    finish();
+  });
+  req.on("error", () => {
+    startNextServer();
+    waitForServer(finish);
+  });
+}
+
 // Clean up processes on exit
 function cleanUp() {
   if (nextProcess) {
@@ -344,23 +383,26 @@ function cleanUp() {
 }
 
 app.on("ready", () => {
+  registerIpcHandlers();
   startNextServer();
   waitForServer(() => {
     console.log("Next.js server is ready. Launching Electron window.");
-    createWindow();
+    launchMainWindow();
   });
 });
 
 app.on("window-all-closed", () => {
-  cleanUp();
+  // On macOS the app stays alive in the Dock after the last window closes.
+  // Keep the Next.js server running so dock reopen does not race a cold restart.
   if (process.platform !== "darwin") {
+    cleanUp();
     app.quit();
   }
 });
 
 app.on("activate", () => {
   if (mainWindow === null) {
-    createWindow();
+    launchMainWindow();
   }
 });
 
