@@ -5,7 +5,7 @@ import {
   type GlobalSettings,
   autoFetchIntervalMs,
 } from "@/lib/globalSettingsTypes";
-import { getUserDataDir } from "@/lib/userDataDir";
+import { getUserDataDir, writeUserDataJson } from "@/lib/userDataDir";
 
 export type { AccentColor, GlobalSettings } from "@/lib/globalSettingsTypes";
 export { DEFAULT_GLOBAL_SETTINGS, autoFetchIntervalMs } from "@/lib/globalSettingsTypes";
@@ -49,6 +49,6 @@ export async function saveGlobalSettings(
   const current = await getGlobalSettings();
   const merged = { ...current, ...updates };
   await ensureDir();
-  await fs.writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+  await writeUserDataJson(SETTINGS_FILE, merged);
   return merged;
 }

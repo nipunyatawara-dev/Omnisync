@@ -18,6 +18,24 @@ describe("shellEnv", () => {
     expect(env.npm_config_prefix).toBeUndefined();
   });
 
+  it("does not re-inject stripped keys from process.env into a cleaned base", () => {
+    const previousTurbo = process.env.TURBO_CACHE_DIR;
+    const previousNext = process.env.NEXT_RUNTIME;
+    process.env.TURBO_CACHE_DIR = "/tmp/should-not-leak";
+    process.env.NEXT_RUNTIME = "nodejs";
+    try {
+      const env = augmentProcessEnv({ FOO: "bar", PATH: "/usr/bin" });
+      expect(env.FOO).toBe("bar");
+      expect(env.TURBO_CACHE_DIR).toBeUndefined();
+      expect(env.NEXT_RUNTIME).toBeUndefined();
+    } finally {
+      if (previousTurbo === undefined) delete process.env.TURBO_CACHE_DIR;
+      else process.env.TURBO_CACHE_DIR = previousTurbo;
+      if (previousNext === undefined) delete process.env.NEXT_RUNTIME;
+      else process.env.NEXT_RUNTIME = previousNext;
+    }
+  });
+
   it("returns a stable cached login shell PATH", () => {
     const first = getLoginShellPath();
     const second = getLoginShellPath();
@@ -28,6 +46,10 @@ describe("shellEnv", () => {
     const npmPath = resolveCommand("npm");
     expect(npmPath).toMatch(/npm$/);
     expect(npmPath.startsWith("/")).toBe(true);
+  });
+
+  it("rejects untrusted command names", () => {
+    expect(() => resolveCommand("rm")).toThrow(/untrusted/i);
   });
 });
 

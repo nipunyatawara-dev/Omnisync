@@ -3,11 +3,11 @@ import { promises as fs } from "fs";
 import path from "path";
 import { getActiveProfile } from "@/lib/profiles";
 import { getGlobalSettings } from "@/lib/globalSettings";
+import { resolveSafePath, PathAccessError } from "@/lib/pathSafety";
 
-interface FileNode {
+export interface FileNode {
   name: string;
   relativePath: string;
-  absolutePath: string;
   isDirectory: boolean;
   children?: FileNode[];
 }
@@ -23,59 +23,39 @@ const IGNORE_DIRS = new Set([
   "User data",
 ]);
 
-async function buildFileTree(
-  dirPath: string,
+/** List a single directory (lazy tree). `relativeDir` empty = workspace root. */
+async function listDirectory(
   rootPath: string,
-  showHiddenFiles: boolean,
-  depth = 0,
-  maxDepth = 15,
-  visited = new Set<string>()
+  relativeDir: string,
+  showHiddenFiles: boolean
 ): Promise<FileNode[]> {
-  const resolvedPath = path.resolve(dirPath);
-  if (depth > maxDepth || visited.has(resolvedPath)) {
-    return [];
-  }
-  
-  // Clone visited set to pass down the tree branch (prevents cross-sibling pollution)
-  const currentVisited = new Set(visited);
-  currentVisited.add(resolvedPath);
+  const dirPath = relativeDir
+    ? await resolveSafePath(rootPath, relativeDir)
+    : path.resolve(rootPath);
 
-  try {
-    const entries = await fs.readdir(resolvedPath, { withFileTypes: true });
-    const nodes: FileNode[] = [];
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+  const nodes: FileNode[] = [];
 
-    for (const entry of entries) {
-      if (IGNORE_DIRS.has(entry.name)) continue;
-      if (!showHiddenFiles && entry.name.startsWith(".")) continue;
+  for (const entry of entries) {
+    if (IGNORE_DIRS.has(entry.name)) continue;
+    if (!showHiddenFiles && entry.name.startsWith(".")) continue;
 
-      const fullPath = path.join(resolvedPath, entry.name);
-      const relativePath = path.relative(rootPath, fullPath);
-
-      const node: FileNode = {
-        name: entry.name,
-        relativePath,
-        absolutePath: fullPath,
-        isDirectory: entry.isDirectory(),
-      };
-
-      if (node.isDirectory) {
-        node.children = await buildFileTree(fullPath, rootPath, showHiddenFiles, depth + 1, maxDepth, currentVisited);
-      }
-
-      nodes.push(node);
-    }
-
-    return nodes.sort((a, b) => {
-      if (a.isDirectory && !b.isDirectory) return -1;
-      if (!a.isDirectory && b.isDirectory) return 1;
-      return a.name.localeCompare(b.name);
+    const relativePath = relativeDir ? path.join(relativeDir, entry.name) : entry.name;
+    nodes.push({
+      name: entry.name,
+      relativePath: relativePath.split(path.sep).join("/"),
+      isDirectory: entry.isDirectory(),
     });
-  } catch {
-    return [];
   }
+
+  return nodes.sort((a, b) => {
+    if (a.isDirectory && !b.isDirectory) return -1;
+    if (!a.isDirectory && b.isDirectory) return 1;
+    return a.name.localeCompare(b.name);
+  });
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const profile = await getActiveProfile();
   if (!profile || !profile.workspacePath) {
     return NextResponse.json({ error: "No active profile or workspace configured" }, { status: 400 });
@@ -84,10 +64,21 @@ export async function GET() {
   try {
     const rootPath = path.resolve(profile.workspacePath);
     const { showHiddenFiles } = await getGlobalSettings();
-    const tree = await buildFileTree(rootPath, rootPath, showHiddenFiles, 0, 15, new Set<string>());
-    return NextResponse.json({ tree, rootPath, showHiddenFiles });
+    const url = new URL(request.url);
+    const relativeDir = (url.searchParams.get("path") || "").replace(/^\/+/, "");
+
+    const children = await listDirectory(rootPath, relativeDir, showHiddenFiles);
+    return NextResponse.json({
+      children,
+      path: relativeDir,
+      rootPath,
+      showHiddenFiles,
+    });
   } catch (err: unknown) {
-    console.error("[files] failed to build tree:", err);
+    if (err instanceof PathAccessError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
+    console.error("[files] failed to list directory:", err);
     return NextResponse.json({ error: "Failed to read workspace files" }, { status: 500 });
   }
 }

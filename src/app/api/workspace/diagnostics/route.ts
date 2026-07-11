@@ -18,6 +18,7 @@ import {
   logTerminalCommand,
   setTerminalPrompt,
 } from "@/lib/dashboardTerminal";
+import { buildWorkspaceChildEnv } from "@/lib/workspaceProcessEnv";
 
 const isWin = process.platform === "win32";
 const npmCmd = isWin ? "npm.cmd" : "npm";
@@ -129,6 +130,7 @@ export async function GET(request: Request) {
   } catch {}
 
   const folderName = path.basename(cwd);
+  const nodeModulesExists = await pathExists(path.join(cwd, "node_modules"));
 
   let currentBranch: string | null = null;
   let remoteUrl: string | null = null;
@@ -160,6 +162,7 @@ export async function GET(request: Request) {
     username,
     hostname,
     folderName,
+    nodeModulesExists,
     currentBranch,
     remoteUrl,
     gitAuthorName,
@@ -253,7 +256,10 @@ export async function POST(request: Request) {
           }
         }
 
-        const child = spawnTool(cmd, args, { cwd });
+        const child = spawnTool(cmd, args, {
+          cwd,
+          env: buildWorkspaceChildEnv(cwd, { mode: "development" }),
+        });
 
         child.stdout?.on("data", (data) => {
           const lines = data.toString().split("\n");

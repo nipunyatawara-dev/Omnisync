@@ -1,5 +1,5 @@
 import { ChildProcess } from "child_process";
-import { augmentProcessEnv, spawnLoginCommand } from "@/lib/shellEnv";
+import { spawnLoginCommand, spawnTool } from "@/lib/shellEnv";
 import { stripTerminalEscapeSequences } from "@/lib/npmInstall";
 import { prepareWorkspaceForRunner } from "@/lib/runnerPrepare";
 import { appendTerminalLine, logTerminalCommand } from "@/lib/dashboardTerminal";
@@ -50,7 +50,6 @@ if (!globalRef.runnerState) {
 
 const state = globalRef.runnerState;
 
-// Append a log line with time stamp
 function appendLog(text: string) {
   const time = new Date().toLocaleTimeString();
   const cleanText = stripTerminalEscapeSequences(text);
@@ -61,14 +60,28 @@ function appendLog(text: string) {
   appendTerminalLine(cleanText, cleanText.includes("[ERROR]") ? "error" : "output");
 }
 
-// Start dev server in target directory
+/** Prefer argv spawn for `npm run <script>` so cwd/env cannot drift via login shell. */
+function spawnRunCommand(
+  runCommand: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv
+): ChildProcess {
+  const match = runCommand.trim().match(/^npm\s+run\s+(\S+)(.*)$/i);
+  if (match) {
+    const script = match[1];
+    const rest = match[2].trim();
+    const extra = rest ? rest.split(/\s+/).filter(Boolean) : [];
+    return spawnTool("npm", ["run", script, ...extra], { cwd, env });
+  }
+  return spawnLoginCommand(runCommand, { cwd, env });
+}
+
 export async function startRunner(cwd: string, options: RunnerStartOptions = {}) {
   const runCommand = options.runCommand?.trim() || "npm run dev";
   const buildCommand = options.buildCommand?.trim() || "npm run build";
   const port = options.port && options.port > 0 ? options.port : 3000;
 
   if (state.status === "running" || state.status === "starting") {
-    // If running in same directory with same command/port, do nothing
     if (state.cwd === cwd && state.runCommand === runCommand && state.port === port) {
       return getRunnerStatus();
     }
@@ -93,13 +106,12 @@ export async function startRunner(cwd: string, options: RunnerStartOptions = {})
 
     appendLog(`Executing: ${runCommand} (PORT=${port})`);
 
-    const child = spawnLoginCommand(runCommand, {
-      cwd,
-      env: buildWorkspaceChildEnv(cwd, {
-        port,
-        mode: workspaceEnvModeForRunCommand(runCommand),
-      }),
+    const env = buildWorkspaceChildEnv(cwd, {
+      port,
+      mode: workspaceEnvModeForRunCommand(runCommand),
     });
+
+    const child = spawnRunCommand(runCommand, cwd, env);
 
     state.childProcess = child;
     state.status = "running";
@@ -150,7 +162,6 @@ export async function startRunner(cwd: string, options: RunnerStartOptions = {})
   return getRunnerStatus();
 }
 
-// Stop development server
 export function stopRunner() {
   if (!state.childProcess) {
     state.status = "stopped";
@@ -161,14 +172,14 @@ export function stopRunner() {
   logTerminalCommand("stop server", "runner");
   try {
     state.childProcess.kill("SIGTERM");
-    
+
     const proc = state.childProcess;
     setTimeout(() => {
       try {
         proc.kill("SIGKILL");
       } catch {}
     }, 1000);
-    
+
     state.childProcess = null;
     state.status = "stopped";
     appendLog("Development server stopped.");
@@ -180,7 +191,6 @@ export function stopRunner() {
   return getRunnerStatus();
 }
 
-// Get runner status
 export function getRunnerStatus(): RunnerStatus {
   return {
     status: state.status,
@@ -191,7 +201,6 @@ export function getRunnerStatus(): RunnerStatus {
   };
 }
 
-// Get live output logs
 export function getRunnerLogs(): string[] {
   return state.logs;
 }

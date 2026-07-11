@@ -8,8 +8,14 @@ const STRIP_EXACT_KEYS = new Set([
   "PWD",
   "OLDPWD",
   "HOSTNAME",
+  "INIT_CWD",
   "npm_config_prefix",
   "NPM_CONFIG_PREFIX",
+  "npm_config_devdir",
+  "NPM_CONFIG_DEVDIR",
+  "npm_config_cache",
+  "NPM_CONFIG_CACHE",
+  "EDITOR",
 ]);
 
 const STRIP_PREFIXES = [
@@ -19,11 +25,26 @@ const STRIP_PREFIXES = [
   "ELECTRON_",
   "__CF",
   "__CURSOR",
+  "CURSOR_",
+  "TURBO_",
+  "TURBOPACK_",
+  "VERCEL_",
+  "npm_config_",
+  "NPM_CONFIG_",
+  "npm_package_",
+  "npm_lifecycle_",
+  "npm_node_",
+  "BUN_",
+  "VSCODE_",
 ];
 
 export function shouldStripWorkspaceEnvKey(key: string): boolean {
   if (STRIP_EXACT_KEYS.has(key)) return true;
-  return STRIP_PREFIXES.some((prefix) => key.startsWith(prefix));
+  const lower = key.toLowerCase();
+  if (STRIP_EXACT_KEYS.has(lower)) return true;
+  return STRIP_PREFIXES.some(
+    (prefix) => key.startsWith(prefix) || lower.startsWith(prefix.toLowerCase())
+  );
 }
 
 /**
@@ -45,6 +66,7 @@ export function buildWorkspaceChildEnv(
   const base: Record<string, string | undefined> = {
     ...cleaned,
     PWD: cwd,
+    INIT_CWD: cwd,
     FORCE_COLOR: cleaned.FORCE_COLOR ?? "1",
   };
 

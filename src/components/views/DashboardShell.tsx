@@ -302,23 +302,25 @@ export default function DashboardShell({
           <div style={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             {children}
           </div>
-          <DashboardTerminal
-            lines={terminal.lines}
-            prompt={terminal.prompt}
-            input={terminal.input}
-            setInput={terminal.setInput}
-            height={terminal.height}
-            persistHeight={terminal.persistHeight}
-            isCollapsed={terminal.isCollapsed}
-            toggleCollapsed={terminal.toggleCollapsed}
-            isManualRunning={terminal.isManualRunning}
-            isSubmitting={terminal.isSubmitting}
-            scrollRef={terminal.scrollRef}
-            onScroll={terminal.handleScroll}
-            onSubmit={terminal.submitCommand}
-            onClear={terminal.clearTerminal}
-            lineColor={terminal.lineColor}
-          />
+          {activeTab === "workspace" && (
+            <DashboardTerminal
+              lines={terminal.lines}
+              prompt={terminal.prompt}
+              input={terminal.input}
+              setInput={terminal.setInput}
+              height={terminal.height}
+              persistHeight={terminal.persistHeight}
+              isCollapsed={terminal.isCollapsed}
+              toggleCollapsed={terminal.toggleCollapsed}
+              isManualRunning={terminal.isManualRunning}
+              isSubmitting={terminal.isSubmitting}
+              scrollRef={terminal.scrollRef}
+              onScroll={terminal.handleScroll}
+              onSubmit={terminal.submitCommand}
+              onClear={terminal.clearTerminal}
+              lineColor={terminal.lineColor}
+            />
+          )}
         </main>
       </div>
 

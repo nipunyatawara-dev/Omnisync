@@ -14,6 +14,7 @@ export interface DiagnosticDetails {
   packageJsonExists: boolean;
   totalDependencies: number;
   missingDependencies: string[];
+  nodeModulesExists?: boolean;
   gitStatus: string;
   projectName?: string;
   projectVersion?: string;

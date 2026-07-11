@@ -22,23 +22,22 @@ describe("npmInstall", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("adds include=optional to install args", () => {
-    expect(npmInstallArgs()).toEqual(["install", "--include=optional"]);
+  it("uses plain npm install args (manual Terminal workflow)", () => {
+    expect(npmInstallArgs()).toEqual(["install"]);
     expect(npmInstallArgs(["cache", "clean", "--force"])).toEqual([
       "cache",
       "clean",
       "--force",
-      "--include=optional",
     ]);
   });
 
-  it("prefers npm ci when package-lock.json exists", async () => {
+  it("resolves to npm install even when a lockfile exists", async () => {
     await fs.writeFile(path.join(tmpDir, "package-lock.json"), "{}", "utf-8");
-    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["ci", "--include=optional"]);
+    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["install"]);
   });
 
   it("falls back to npm install without a lockfile", async () => {
-    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["install", "--include=optional"]);
+    expect(await resolveDependencyInstallArgs(tmpDir)).toEqual(["install"]);
   });
 
   it("resets esbuild when @esbuild platform packages are missing", async () => {

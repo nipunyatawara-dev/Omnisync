@@ -113,16 +113,14 @@ export function sanitizeNpmInstallLogLine(line: string): string | null {
 }
 
 export function npmInstallArgs(baseArgs: string[] = ["install"]): string[] {
-  return [...baseArgs, "--include=optional"];
+  // Match the manual workflow: plain `npm install` (deps + devDeps).
+  // Callers must run with NODE_ENV=development so npm does not omit devDependencies.
+  return [...baseArgs];
 }
 
-/** Prefer `npm ci` when a lockfile exists so installs never rewrite package-lock.json. */
+/** Use plain `npm install`, same as a normal Terminal workflow after clone. */
 export async function resolveDependencyInstallArgs(
-  cwd: string
+  _cwd: string
 ): Promise<string[]> {
-  const lockfilePath = path.join(cwd, "package-lock.json");
-  if (await pathExists(lockfilePath)) {
-    return npmInstallArgs(["ci"]);
-  }
   return npmInstallArgs(["install"]);
 }

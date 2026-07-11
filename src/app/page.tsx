@@ -19,6 +19,7 @@ import { useDiagnostics } from "@/hooks/useDiagnostics";
 import { useTimeline } from "@/hooks/useTimeline";
 import { useDashboardTerminal } from "@/hooks/useDashboardTerminal";
 import type { DashboardTab, DiagnosticDetails } from "@/types/dashboard";
+import { clearWorkspaceReady, isWorkspaceReady } from "@/lib/launchSession";
 
 export default function DashboardPage() {
   const router = useAppRouter();
@@ -84,21 +85,31 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function loadProfile() {
+      // Every app open should pick a workspace first (session flag is set after selection).
+      if (!isWorkspaceReady()) {
+        setIsLoadingProfile(false);
+        router.replace("/setup");
+        return;
+      }
+
       try {
         const res = await fetch("/api/profiles");
         const data = await res.json();
         if (!data.activeProfileId || data.profiles.length === 0) {
-          router.push("/setup");
+          clearWorkspaceReady();
+          router.replace("/setup");
           return;
         }
         const active = (data.profiles as UserProfile[]).find((p) => p.id === data.activeProfileId);
         if (!active || !active.workspacePath) {
-          router.push("/setup");
+          clearWorkspaceReady();
+          router.replace("/setup");
           return;
         }
         setActiveProfile(active);
       } catch {
-        router.push("/setup");
+        clearWorkspaceReady();
+        router.replace("/setup");
       } finally {
         setIsLoadingProfile(false);
       }
@@ -121,7 +132,10 @@ export default function DashboardPage() {
         const res = await fetch("/api/workspace/diagnostics");
         const data = await res.json();
         diagnostics.setDiagData(data as DiagnosticDetails);
-        diagnostics.checkAndInstallDependencies(data as DiagnosticDetails);
+        diagnostics.checkAndInstallDependencies(
+          data as DiagnosticDetails,
+          activeProfile.workspacePath || activeProfile.id
+        );
       } catch {}
     });
   }, [activeProfile]);
@@ -190,7 +204,10 @@ export default function DashboardPage() {
       showGuideTourButton={showGuideTourButton}
       onOpenTour={() => setTourOpen(true)}
       onDismissTourButton={handleDismissTourButton}
-      onSwitchWorkspace={() => router.push("/setup")}
+      onSwitchWorkspace={() => {
+        clearWorkspaceReady();
+        router.push("/setup");
+      }}
       terminal={dashboardTerminal}
       footer={
         <ProductTour
@@ -227,6 +244,7 @@ export default function DashboardPage() {
           onBranchChange={workspace.handleBranchChange}
           onSelectFile={workspace.handleSelectFile}
           onCloseFile={workspace.handleCloseFile}
+          onExpandDirectory={workspace.loadDirectoryChildren}
           onClearConflictSelection={() => setSelectedConflictFile(null)}
           startResizeLeft={workspace.startResizeLeft}
           startResizeRight={workspace.startResizeRight}

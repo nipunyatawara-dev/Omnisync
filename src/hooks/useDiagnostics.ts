@@ -22,7 +22,7 @@ export function useDiagnostics(
 
   const maintenanceCommandLabel: Record<string, string> = {
     "clean-cache": "npm cache clean --force",
-    "clean-modules": "npm ci --include=optional",
+    "clean-modules": "npm install",
     "audit-fix": "npm audit fix --force",
   };
 
@@ -59,8 +59,12 @@ export function useDiagnostics(
     await readDiagnosticsNdjsonStream(res, onLog);
   };
 
+  const autoInstallOfferedKey = (workspaceKey: string) =>
+    `omnisync_auto_install_offered:${workspaceKey}`;
+
   const runDependencyInstall = async (missingPackages: string[]) => {
     const count = missingPackages.length;
+
     setDepInstallModal({
       phase: "installing",
       missingCount: count,
@@ -109,10 +113,30 @@ export function useDiagnostics(
     }
   };
 
-  const checkAndInstallDependencies = async (diagnostics: DiagnosticDetails) => {
-    if (diagnostics.missingDependencies && diagnostics.missingDependencies.length > 0) {
-      await runDependencyInstall(diagnostics.missingDependencies);
+  const checkAndInstallDependencies = async (
+    diagnostics: DiagnosticDetails,
+    workspaceKey = "default"
+  ) => {
+    if (!diagnostics.missingDependencies || diagnostics.missingDependencies.length === 0) {
+      return;
     }
+
+    // If node_modules already exists, dependencies were installed before — do not
+    // auto re-run npm install when switching back to this workspace. Partial gaps
+    // can still be fixed manually from the Diagnostics tab.
+    if (diagnostics.nodeModulesExists) {
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const storageKey = autoInstallOfferedKey(workspaceKey);
+      if (sessionStorage.getItem(storageKey) === "1") {
+        return;
+      }
+      sessionStorage.setItem(storageKey, "1");
+    }
+
+    await runDependencyInstall(diagnostics.missingDependencies);
   };
 
   const appendDiagnosticSessionLine = (line: string) => {
@@ -131,6 +155,11 @@ export function useDiagnostics(
       ? `${diagData.username || "user"}@${diagData.hostname || "localhost"} ${diagData.folderName || "workspace"}`
       : "user@localhost workspace";
     const commandLabel = maintenanceCommandLabel[action] || action;
+
+    const ok = window.confirm(
+      `Run “${commandLabel}”? This runs as your user with full shell access on this machine.`
+    );
+    if (!ok) return;
 
     setIsActionLoading(true);
     setLastCommandExit(null);

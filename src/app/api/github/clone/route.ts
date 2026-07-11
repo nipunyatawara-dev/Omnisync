@@ -3,22 +3,33 @@ import fs from "fs/promises";
 import path from "path";
 import { getActiveProfile, getGithubToken } from "@/lib/profiles";
 import { spawnTool } from "@/lib/shellEnv";
+import { assertAllowedClonePath } from "@/lib/clonePathSafety";
 
 export async function POST(request: Request) {
   try {
-    const { cloneUrl, localPath, token: bodyToken } = await request.json();
+    const { cloneUrl, localPath } = await request.json();
 
-    // Prefer the server-stored token; fall back to a client-provided token,
-    // which is only used during initial setup before a profile is saved.
+    // Prefer the server-stored token (session or active profile).
     const profile = await getActiveProfile();
-    const token = profile?.gitToken || bodyToken || (await getGithubToken());
+    const token = profile?.gitToken || (await getGithubToken());
 
     if (!cloneUrl || !localPath || !token) {
-      return NextResponse.json({ error: "Missing required parameters: cloneUrl, localPath, or token" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required parameters: cloneUrl, localPath, or token" },
+        { status: 400 }
+      );
     }
 
     if (typeof localPath !== "string" || !path.isAbsolute(localPath)) {
       return NextResponse.json({ error: "localPath must be an absolute path" }, { status: 400 });
+    }
+
+    let safeLocalPath: string;
+    try {
+      safeLocalPath = await assertAllowedClonePath(localPath);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Invalid clone path";
+      return NextResponse.json({ error: message }, { status: 400 });
     }
 
     // Only allow cloning from GitHub over HTTPS. This prevents the injected
@@ -30,29 +41,31 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid clone URL" }, { status: 400 });
     }
     if (parsedCloneUrl.protocol !== "https:" || parsedCloneUrl.hostname !== "github.com") {
-      return NextResponse.json({ error: "Only https://github.com clone URLs are allowed" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Only https://github.com clone URLs are allowed" },
+        { status: 400 }
+      );
     }
 
-    // Ensure the parent directory of localPath exists
-    const parentDir = path.dirname(localPath);
+    const parentDir = path.dirname(safeLocalPath);
     await fs.mkdir(parentDir, { recursive: true });
 
-    // Verify if directory already exists and is not empty
     try {
-      const files = await fs.readdir(localPath);
+      const files = await fs.readdir(safeLocalPath);
       if (files.length > 0) {
-        return NextResponse.json({ error: "Target directory already exists and is not empty." }, { status: 400 });
+        return NextResponse.json(
+          { error: "Target directory already exists and is not empty." },
+          { status: 400 }
+        );
       }
     } catch {
       // Directory doesn't exist, which is fine
     }
 
-    // Inject token into clone URL: https://x-access-token:<token>@github.com/...
     parsedCloneUrl.username = "x-access-token";
     parsedCloneUrl.password = token;
     const authenticatedUrl = parsedCloneUrl.toString();
 
-    // Create a streaming response
     const encoder = new TextEncoder();
     const customStream = new ReadableStream({
       async start(controller) {
@@ -69,11 +82,10 @@ export async function POST(request: Request) {
           controller.close();
         };
 
-        sendLog(`> Initializing target directory: ${localPath}`);
-        sendLog(`> git clone --progress "${cloneUrl.replace(token, "******")}" "${localPath}"`);
+        sendLog(`> Initializing target directory: ${safeLocalPath}`);
+        sendLog(`> git clone --progress "${cloneUrl}" "${safeLocalPath}"`);
 
-        // Spawn git clone process with progress enabled
-        const gitProcess = spawnTool("git", ["clone", "--progress", authenticatedUrl, localPath]);
+        const gitProcess = spawnTool("git", ["clone", "--progress", authenticatedUrl, safeLocalPath]);
 
         gitProcess.stdout?.on("data", (data) => {
           const lines = data.toString().split("\n");
@@ -103,15 +115,16 @@ export async function POST(request: Request) {
           sendLog("> Git clone completed successfully.");
           sendLog("> Scrubbing authentication tokens from git configuration origin URL...");
 
-          // Set origin URL back to clean URL to scrub token
           const cleanUrl = cloneUrl.endsWith(".git") ? cloneUrl : `${cloneUrl}.git`;
           const scrubProcess = spawnTool("git", ["remote", "set-url", "origin", cleanUrl], {
-            cwd: localPath,
+            cwd: safeLocalPath,
           });
 
           scrubProcess.on("close", (scrubCode) => {
             if (scrubCode !== 0) {
-              sendLog(`[Warning] Failed to reset remote URL, token might still be cached: code ${scrubCode}`);
+              sendLog(
+                `[Warning] Failed to reset remote URL, token might still be cached: code ${scrubCode}`
+              );
             } else {
               sendLog("> Remote origin token scrubbed successfully.");
             }
@@ -127,7 +140,7 @@ export async function POST(request: Request) {
       headers: {
         "Content-Type": "application/x-ndjson",
         "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        Connection: "keep-alive",
       },
     });
   } catch (error: unknown) {

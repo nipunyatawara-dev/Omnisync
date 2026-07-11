@@ -33,6 +33,7 @@ interface WorkspaceViewProps {
   onBranchChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
   onSelectFile: (file: string) => void;
   onCloseFile: (file: string, e: React.MouseEvent) => void;
+  onExpandDirectory?: (relativePath: string) => Promise<void> | void;
   onClearConflictSelection: () => void;
   startResizeLeft: (e: React.MouseEvent) => void;
   startResizeRight: (e: React.MouseEvent) => void;
@@ -63,6 +64,7 @@ export default function WorkspaceView({
   onBranchChange,
   onSelectFile,
   onCloseFile,
+  onExpandDirectory,
   onClearConflictSelection,
   startResizeLeft,
   startResizeRight,
@@ -330,6 +332,7 @@ export default function WorkspaceView({
               onClearConflictSelection();
               onSelectFile(f);
             }}
+            onExpandDirectory={onExpandDirectory}
           />
         </div>
 

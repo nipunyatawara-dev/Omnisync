@@ -9,6 +9,8 @@ const STORAGE_COLLAPSED_KEY = "omnisync_terminal_collapsed";
 const DEFAULT_HEIGHT = 220;
 const MIN_HEIGHT = 120;
 const MAX_HEIGHT = 520;
+const ACTIVE_POLL_MS = 1000;
+const IDLE_POLL_MS = 4000;
 
 export function useDashboardTerminal() {
   const [lines, setLines] = useState<TerminalLine[]>([]);
@@ -22,6 +24,9 @@ export function useDashboardTerminal() {
   const lastIdRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+  const shellAckRef = useRef(false);
+  const isManualRunningRef = useRef(false);
+  const isCollapsedRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -31,6 +36,14 @@ export function useDashboardTerminal() {
     }
     setIsCollapsed(localStorage.getItem(STORAGE_COLLAPSED_KEY) === "true");
   }, []);
+
+  useEffect(() => {
+    isManualRunningRef.current = isManualRunning;
+  }, [isManualRunning]);
+
+  useEffect(() => {
+    isCollapsedRef.current = isCollapsed;
+  }, [isCollapsed]);
 
   const persistHeight = useCallback((value: number) => {
     const next = Math.max(MIN_HEIGHT, Math.min(value, MAX_HEIGHT));
@@ -75,9 +88,43 @@ export function useDashboardTerminal() {
   }, []);
 
   useEffect(() => {
-    pollTerminal();
-    const timer = setInterval(pollTerminal, 1000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const schedule = (delay: number) => {
+      timer = setTimeout(tick, delay);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      const visible = typeof document === "undefined" || document.visibilityState === "visible";
+      const shouldPoll =
+        visible && (!isCollapsedRef.current || isManualRunningRef.current);
+
+      if (shouldPoll) {
+        await pollTerminal();
+      }
+
+      const active =
+        isManualRunningRef.current ||
+        (visible && !isCollapsedRef.current);
+      schedule(active ? ACTIVE_POLL_MS : IDLE_POLL_MS);
+    };
+
+    void tick();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void pollTerminal();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [pollTerminal]);
 
   useEffect(() => {
@@ -97,6 +144,14 @@ export function useDashboardTerminal() {
   const submitCommand = useCallback(async () => {
     const command = input.trim();
     if (!command || isSubmitting) return;
+
+    if (!shellAckRef.current) {
+      const ok = window.confirm(
+        "Terminal commands run as your user with full shell access on this machine. Continue?"
+      );
+      if (!ok) return;
+      shellAckRef.current = true;
+    }
 
     setIsSubmitting(true);
     shouldAutoScrollRef.current = true;

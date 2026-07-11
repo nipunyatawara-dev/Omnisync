@@ -13,6 +13,9 @@ describe("workspaceProcessEnv", () => {
     expect(shouldStripWorkspaceEnvKey("ELECTRON_RUN_AS_NODE")).toBe(true);
     expect(shouldStripWorkspaceEnvKey("NODE_ENV")).toBe(true);
     expect(shouldStripWorkspaceEnvKey("HOSTNAME")).toBe(true);
+    expect(shouldStripWorkspaceEnvKey("TURBO_CACHE_DIR")).toBe(true);
+    expect(shouldStripWorkspaceEnvKey("npm_config_cache")).toBe(true);
+    expect(shouldStripWorkspaceEnvKey("NPM_CONFIG_CACHE")).toBe(true);
     expect(shouldStripWorkspaceEnvKey("PATH")).toBe(false);
     expect(shouldStripWorkspaceEnvKey("HOME")).toBe(false);
   });

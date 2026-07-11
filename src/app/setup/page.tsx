@@ -11,6 +11,11 @@ import ProfileSelectionStep from "@/components/setup/ProfileSelectionStep";
 import RepoSelectionStep from "@/components/setup/RepoSelectionStep";
 import type { DiagnosticScanResult, GithubUserDetail, UIRepository } from "@/components/setup/types";
 import { useGithubOAuth } from "@/hooks/useGithubOAuth";
+import {
+  isLocalOnlyMode,
+  markLocalOnlyMode,
+  markWorkspaceReady,
+} from "@/lib/launchSession";
 
 export default function SetupPage() {
   const router = useAppRouter();
@@ -24,9 +29,9 @@ export default function SetupPage() {
   const [isPatValidating, setIsPatValidating] = useState(false);
   const [manualPath, setManualPath] = useState("");
 
-  const handleOAuthSuccess = useCallback(async (data: { username: string; token: string; avatarUrl?: string }) => {
+  const handleOAuthSuccess = useCallback(async (data: { username: string; avatarUrl?: string }) => {
     setGitUsername(data.username);
-    setGitToken(data.token);
+    setGitToken("");
     setGithubConnected(true);
     setGithubUserDetail({
       avatarUrl: data.avatarUrl || "",
@@ -118,9 +123,8 @@ export default function SetupPage() {
         if (githubConnected) {
           setSetupMode("clone");
           setIsFetchingRepos(true);
-          const options = gitToken ? { headers: { Authorization: `Bearer ${gitToken}` } } : undefined;
           try {
-            const res = await fetch("/api/github/repos", options);
+            const res = await fetch("/api/github/repos");
             const data = await res.json();
             if (!active) return;
             if (data.repos) {
@@ -149,7 +153,7 @@ export default function SetupPage() {
     return () => {
       active = false;
     };
-  }, [step, githubConnected, gitToken]);
+  }, [step, githubConnected]);
 
   const handleRepoChange = (repoId: string) => {
     setSelectedRepoId(repoId);
@@ -213,7 +217,6 @@ export default function SetupPage() {
         body: JSON.stringify({
           cloneUrl: repo.cloneUrl,
           localPath: clonePath,
-          token: gitToken || undefined,
         }),
       });
 
@@ -270,7 +273,6 @@ export default function SetupPage() {
           action: "create",
           name: workspaceRecordName,
           profession: "Developer Workspace",
-          gitToken,
         }),
       });
 
@@ -343,7 +345,7 @@ export default function SetupPage() {
         fetchGithubUserDetail();
       }
 
-      if (profiles.length > 0 || data.githubConnected) {
+      if (profiles.length > 0 || data.githubConnected || isLocalOnlyMode()) {
         setStep("profile-selection");
       }
     } catch {}
@@ -357,33 +359,20 @@ export default function SetupPage() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("oauth_success") === "true") {
-      let token = "";
       let username = "";
       let avatarUrl = "";
       try {
-        token = sessionStorage.getItem("oauth_token") || "";
         username = sessionStorage.getItem("oauth_username") || "";
         avatarUrl = sessionStorage.getItem("oauth_avatar") || "";
-        sessionStorage.removeItem("oauth_token");
         sessionStorage.removeItem("oauth_username");
         sessionStorage.removeItem("oauth_avatar");
       } catch (e) {
         console.error("sessionStorage read error:", e);
       }
-      if (token && username) {
-        Promise.resolve().then(async () => {
-          try {
-            await fetch("/api/github/session", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ token, login: username, avatarUrl }),
-            });
-          } catch (e) {
-            console.error("Failed to persist GitHub session", e);
-          }
-
+      if (username) {
+        Promise.resolve().then(() => {
           setGitUsername(username);
-          setGitToken(token);
+          setGitToken("");
           setGithubConnected(true);
           setGithubUserDetail({
             avatarUrl,
@@ -428,6 +417,7 @@ export default function SetupPage() {
           return;
         }
         setGitUsername(data.login || username);
+        setGitToken("");
         setGithubConnected(true);
         setGithubUserDetail({
           avatarUrl: data.avatarUrl || "",
@@ -444,8 +434,10 @@ export default function SetupPage() {
         setIsPatValidating(false);
       }
     } else {
+      // Continue without GitHub — remember local-only so next launch skips login.
       setGithubConnected(false);
       setGithubUserDetail(null);
+      markLocalOnlyMode();
     }
 
     setManualPath(process.cwd());
@@ -461,6 +453,7 @@ export default function SetupPage() {
       });
       const data = await res.json();
       if (data.success) {
+        markWorkspaceReady();
         router.push("/");
       } else {
         alert(`Error selecting workspace: ${data.error}`);
@@ -489,7 +482,6 @@ export default function SetupPage() {
           action: "create",
           name: workspaceRecordName,
           profession: "Developer Workspace",
-          gitToken,
         }),
       });
 
@@ -529,6 +521,7 @@ export default function SetupPage() {
   };
 
   const handleLaunchManual = () => {
+    markWorkspaceReady();
     router.push("/");
   };
 
@@ -552,7 +545,10 @@ export default function SetupPage() {
           isPatValidating={isPatValidating}
           onGitLogin={handleGitLogin}
           onGitHubSignIn={oauth.handleGitHubSignIn}
-          onSkipToProfileSelection={() => setStep("profile-selection")}
+          onSkipToProfileSelection={() => {
+            markLocalOnlyMode();
+            setStep("profile-selection");
+          }}
           showOauthConfigForm={oauth.showOauthConfigForm}
           setShowOauthConfigForm={oauth.setShowOauthConfigForm}
           oauthConfigured={oauth.oauthConfigured}

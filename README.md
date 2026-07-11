@@ -120,13 +120,22 @@ Start, stop, and monitor development servers from the dashboard:
 
 ### Run locally
 
+Prefer launching through Electron so the API cookie and encryption secret are provisioned:
+
 ```bash
 git clone https://github.com/nipunyatawara-dev/Omnisync.git
 cd Omnisync
 npm install
-npm run dev        # Next.js dev server
-npm run electron   # Electron shell (separate terminal)
+npm run electron   # starts Electron + Next.js with a secure local API token
 ```
+
+For UI-only work you can run Next alone, but that mode does not auto-set the API cookie and is **not** a supported secure deployment:
+
+```bash
+npm run dev        # Next.js only — see SECURITY.md
+```
+
+Optional OAuth overrides: copy [`.env.example`](.env.example) to `.env.local`.
 
 ### Build
 
@@ -135,7 +144,7 @@ npm run build
 npm start
 ```
 
-Profile data, encrypted secrets, and workspace configuration are stored under `User data/` in the project root.
+Profile data, encrypted secrets, and workspace configuration are stored under `User data/` in the project root (mode `0600` for credential files).
 
 ### Package for distribution
 
@@ -145,12 +154,15 @@ npm run electron:pack    # unpacked app in dist/
 npm run electron:build   # platform installers (.dmg, .exe, .AppImage)
 ```
 
+macOS builds ship **unsigned** by default (`identity: null`). Distributing signed/notarized builds requires an Apple Developer identity configured in electron-builder. Unsigned apps may need right-click → Open on first launch.
+
 ### Tests
 
 ```bash
 npm test
 ```
 
+See also [SECURITY.md](SECURITY.md) for the local-trust threat model.
 # Architecture
 
 OmniSync is a three-layer desktop app:
@@ -171,13 +183,13 @@ Electron shell (main.js)
 | **API** | `src/app/api/workspace/*`, `src/middleware.ts` | Auth-guarded routes for git, files, runner, launch, diagnostics |
 | **Core** | `src/lib/git.ts`, `profiles.ts`, `pathSafety.ts`, `platformLaunch.ts` | Git ops, encrypted profiles, safe paths, cross-platform IDE launch |
 
-**Security model:** Electron generates a per-session API token and encryption secret. Middleware requires a matching HttpOnly cookie on `/api/*` from localhost only. Profile tokens are encrypted at rest with AES-256-GCM.
+**Security model:** Electron generates a per-session API token and encryption secret. Middleware requires a matching HttpOnly cookie on all `/api/*` routes from localhost only. GitHub tokens are persisted server-side only (AES-256-GCM with a per-install salt) and are not returned to the browser after OAuth/device auth.
 
 **Data flow (git sync):** UI → `POST /api/workspace/git` → `src/lib/git.ts` → system `git` binary → JSON response → dashboard state via `useGitSync` hook.
 
 # Platform support
 
-OmniSync is **macOS-first**: IDE launch, folder permissions, and dock integration are optimized for macOS. Windows and Linux builds are supported via electron-builder, and `src/lib/platformLaunch.ts` includes cross-platform paths, but those targets receive less testing. Unsigned macOS builds may require right-click → Open on first launch.
+OmniSync is **macOS-first**: IDE launch, folder permissions, and dock integration are optimized for macOS. Windows and Linux builds are supported via electron-builder, and `src/lib/platformLaunch.ts` includes cross-platform paths, but those targets receive less testing. Unsigned macOS builds may require right-click → Open on first launch; see Development → Package for distribution.
 
 # Contributing
 

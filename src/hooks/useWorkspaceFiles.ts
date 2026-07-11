@@ -32,9 +32,45 @@ export function useWorkspaceFiles(
         showNotification(data.error || "Failed to load workspace files", "error");
         return;
       }
-      setFileTree((data.tree as FileNode[]) || []);
+      const children = ((data.children as FileNode[]) || []).map((node) => ({
+        ...node,
+        childrenLoaded: false,
+      }));
+      setFileTree(children);
     } catch {
       showNotification("Failed to load workspace files", "error");
+    }
+  };
+
+  const loadDirectoryChildren = async (relativePath: string) => {
+    try {
+      const res = await fetch(
+        `/api/workspace/files?path=${encodeURIComponent(relativePath)}`
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        showNotification(data.error || "Failed to load folder", "error");
+        return;
+      }
+      const children = ((data.children as FileNode[]) || []).map((node) => ({
+        ...node,
+        childrenLoaded: false,
+      }));
+
+      const attach = (nodes: FileNode[]): FileNode[] =>
+        nodes.map((node) => {
+          if (node.relativePath === relativePath) {
+            return { ...node, children, childrenLoaded: true };
+          }
+          if (node.children?.length) {
+            return { ...node, children: attach(node.children) };
+          }
+          return node;
+        });
+
+      setFileTree((prev) => attach(prev));
+    } catch {
+      showNotification("Failed to load folder", "error");
     }
   };
 
@@ -189,6 +225,7 @@ export function useWorkspaceFiles(
     isResizingLeft,
     isResizingRight,
     loadWorkspaceFiles,
+    loadDirectoryChildren,
     handleSelectFile,
     handleCloseFile,
     handleBranchChange,

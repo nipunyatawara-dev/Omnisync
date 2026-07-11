@@ -10,6 +10,7 @@ type ShellEnvModule = {
   resolveCommand: (name: string) => string;
   spawnLoginCommand: (commandLine: string, options?: SpawnOptions) => ChildProcess;
   spawnTool: (name: string, args: string[], options?: SpawnOptions) => ChildProcess;
+  clearShellEnvCache: () => void;
 };
 
 const requireFromCwd = createRequire(path.join(process.cwd(), "package.json"));
@@ -41,4 +42,8 @@ export function spawnLoginCommand(commandLine: string, options: SpawnOptions = {
 
 export function spawnTool(name: string, args: string[], options: SpawnOptions = {}) {
   return loadShellEnv().spawnTool(name, args, options);
+}
+
+export function clearShellEnvCache() {
+  return loadShellEnv().clearShellEnvCache();
 }

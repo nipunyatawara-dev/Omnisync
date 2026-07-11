@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOauthConfig } from "@/lib/profiles";
+import { getOauthConfig, saveGithubSession } from "@/lib/profiles";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -10,14 +10,14 @@ export async function GET(request: Request) {
 
   if (error || errorDescription) {
     return new NextResponse(
-      renderHtmlResponse(nonce, false, "", "", "", errorDescription || error || "Unknown OAuth error"),
+      renderHtmlResponse(nonce, false, "", "", errorDescription || error || "Unknown OAuth error"),
       { headers: { "Content-Type": "text/html" } }
     );
   }
 
   if (!code) {
     return new NextResponse(
-      renderHtmlResponse(nonce, false, "", "", "", "No authorization code returned from GitHub"),
+      renderHtmlResponse(nonce, false, "", "", "No authorization code returned from GitHub"),
       { headers: { "Content-Type": "text/html" } }
     );
   }
@@ -29,12 +29,11 @@ export async function GET(request: Request) {
 
     if (!clientId || !clientSecret) {
       return new NextResponse(
-        renderHtmlResponse(nonce, false, "", "", "", "GitHub OAuth Application is not configured on the server"),
+        renderHtmlResponse(nonce, false, "", "", "GitHub OAuth Application is not configured on the server"),
         { headers: { "Content-Type": "text/html" } }
       );
     }
 
-    // Exchange code for token
     const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST",
       headers: {
@@ -53,14 +52,13 @@ export async function GET(request: Request) {
 
     if (tokenData.error) {
       return new NextResponse(
-        renderHtmlResponse(nonce, false, "", "", "", tokenData.error_description || tokenData.error),
+        renderHtmlResponse(nonce, false, "", "", tokenData.error_description || tokenData.error),
         { headers: { "Content-Type": "text/html" } }
       );
     }
 
     const accessToken = tokenData.access_token;
 
-    // Fetch user profile
     const userRes = await fetch("https://api.github.com/user", {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -74,7 +72,7 @@ export async function GET(request: Request) {
       const userErr = await userRes.text();
       console.error("[auth/callback] profile fetch failed:", userRes.status, userErr);
       return new NextResponse(
-        renderHtmlResponse(nonce, false, "", "", "", "Failed to retrieve GitHub profile"),
+        renderHtmlResponse(nonce, false, "", "", "Failed to retrieve GitHub profile"),
         { headers: { "Content-Type": "text/html" } }
       );
     }
@@ -83,22 +81,23 @@ export async function GET(request: Request) {
     const username = userData.login;
     const avatarUrl = userData.avatar_url || "";
 
-    return new NextResponse(
-      renderHtmlResponse(nonce, true, accessToken, username, avatarUrl),
-      { headers: { "Content-Type": "text/html" } }
-    );
+    await saveGithubSession({
+      token: accessToken,
+      login: username,
+      avatarUrl,
+    });
+
+    return new NextResponse(renderHtmlResponse(nonce, true, username, avatarUrl), {
+      headers: { "Content-Type": "text/html" },
+    });
   } catch (err: unknown) {
     console.error("[auth/callback] failed:", err);
-    return new NextResponse(
-      renderHtmlResponse(nonce, false, "", "", "", "OAuth callback error"),
-      { headers: { "Content-Type": "text/html" } }
-    );
+    return new NextResponse(renderHtmlResponse(nonce, false, "", "", "OAuth callback error"), {
+      headers: { "Content-Type": "text/html" },
+    });
   }
 }
 
-// Serialize an object safely for embedding in an inline <script> block.
-// JSON.stringify alone does not escape sequences like </script> or the
-// line/paragraph separators that can break out of the script context.
 function serializeForScript(value: unknown): string {
   return JSON.stringify(value)
     .replace(/</g, "\\u003c")
@@ -120,7 +119,6 @@ function escapeHtml(str: string): string {
 function renderHtmlResponse(
   nonce: string,
   success: boolean,
-  token: string,
   username: string,
   avatarUrl: string,
   errorMessage = ""
@@ -128,12 +126,12 @@ function renderHtmlResponse(
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   const safeUsername = escapeHtml(username);
   const safeError = escapeHtml(errorMessage);
+  // Never embed the access token — session is already saved server-side.
   const statusObject = serializeForScript({
     success,
-    token,
     username,
     avatarUrl,
-    error: errorMessage
+    error: errorMessage,
   });
 
   return `<!DOCTYPE html>
@@ -197,10 +195,8 @@ function renderHtmlResponse(
           window.close();
         }, 1000);
       } else {
-        // Direct redirect fallback
         if (status.success) {
           try {
-            sessionStorage.setItem("oauth_token", status.token);
             sessionStorage.setItem("oauth_username", status.username);
             sessionStorage.setItem("oauth_avatar", status.avatarUrl);
           } catch (e) {

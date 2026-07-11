@@ -6,7 +6,6 @@ export type OAuthState = "idle" | "authorizing" | "success";
 
 export interface OAuthSuccessData {
   username: string;
-  token: string;
   avatarUrl?: string;
 }
 
@@ -77,7 +76,6 @@ export function useGithubOAuth({ onAuthSuccess }: UseGithubOAuthOptions) {
 
           await onAuthSuccessRef.current({
             username: data.username,
-            token: data.token,
             avatarUrl: data.avatarUrl || "",
           });
 

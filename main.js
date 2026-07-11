@@ -17,12 +17,25 @@ const apiToken = crypto.randomBytes(32).toString("hex");
 function getOrCreateEncryptionSecret() {
   const userDataDir = getUserDataDir();
   const secretFile = path.join(userDataDir, "secret.bin");
+  const saltFile = path.join(userDataDir, "encryption-salt.bin");
   const ENC_PREFIX = "v1:enc:";
   const PLAIN_PREFIX = "v1:plain:";
 
   try {
     fs.mkdirSync(userDataDir, { recursive: true });
   } catch {}
+
+  // Ensure a per-install salt exists for credential encryption.
+  try {
+    if (!fs.existsSync(saltFile) || fs.readFileSync(saltFile).length < 16) {
+      fs.writeFileSync(saltFile, crypto.randomBytes(32), { mode: 0o600 });
+      try {
+        fs.chmodSync(saltFile, 0o600);
+      } catch {}
+    }
+  } catch (err) {
+    console.error("Failed to ensure encryption salt:", err);
+  }
 
   try {
     if (fs.existsSync(secretFile)) {
@@ -32,6 +45,17 @@ function getOrCreateEncryptionSecret() {
         return safeStorage.decryptString(encrypted);
       }
       if (stored.startsWith(PLAIN_PREFIX)) {
+        if (app.isPackaged) {
+          console.error(
+            "Packaged OmniSync refuses plaintext encryption secrets. Reinstall or clear userData."
+          );
+          dialog.showErrorBox(
+            "OmniSync security error",
+            "OS keychain is required to protect credentials in packaged builds. The existing secret is stored in plaintext and cannot be used."
+          );
+          app.quit();
+          return null;
+        }
         return stored.slice(PLAIN_PREFIX.length);
       }
     }
@@ -44,8 +68,16 @@ function getOrCreateEncryptionSecret() {
     if (safeStorage.isEncryptionAvailable()) {
       const encrypted = safeStorage.encryptString(secret).toString("base64");
       fs.writeFileSync(secretFile, ENC_PREFIX + encrypted, { encoding: "utf-8", mode: 0o600 });
+    } else if (app.isPackaged) {
+      console.error("OS keychain unavailable; refusing to start packaged OmniSync.");
+      dialog.showErrorBox(
+        "OmniSync security error",
+        "OS keychain encryption is unavailable. OmniSync cannot store credentials securely in this packaged build."
+      );
+      app.quit();
+      return null;
     } else {
-      console.warn("OS keychain unavailable; storing encryption secret without keychain protection.");
+      console.warn("OS keychain unavailable; storing encryption secret without keychain protection (dev only).");
       fs.writeFileSync(secretFile, PLAIN_PREFIX + secret, { encoding: "utf-8", mode: 0o600 });
     }
   } catch (err) {
@@ -111,6 +143,9 @@ function startNextServer() {
   const appRoot = getAppRoot();
   const userDataDir = getUserDataDir();
   const encryptionSecret = getOrCreateEncryptionSecret();
+  if (!encryptionSecret) {
+    return;
+  }
 
   console.log(`Starting Next.js server in ${isDev ? "development" : "production"} mode...`);
 
@@ -337,7 +372,7 @@ function createWindow() {
     }
   });
 
-  mainWindow.loadURL(SERVER_URL);
+  mainWindow.loadURL(`${SERVER_URL}/setup`);
 
   mainWindow.once("ready-to-show", () => {
     mainWindow.show();

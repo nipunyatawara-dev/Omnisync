@@ -9,8 +9,8 @@ export default defineConfig({
       provider: "v8",
       include: ["src/lib/**", "src/app/api/**"],
       thresholds: {
-        lines: 15,
-        functions: 30,
+        lines: 25,
+        functions: 45,
       },
     },
   },

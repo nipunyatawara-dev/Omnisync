@@ -102,11 +102,11 @@ export function useRunner(
 
   useEffect(() => {
     const isRunnerActive = runnerStatus?.status === "running" || runnerStatus?.status === "starting";
-    if (!isRunnerActive) {
-      return;
-    }
 
     async function checkRunner() {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       try {
         const res = await fetch("/api/workspace/runner");
         const data = await res.json();
@@ -121,13 +121,23 @@ export function useRunner(
 
     checkRunner();
 
-    pollIntervalRef.current = setInterval(checkRunner, 3000);
+    // Poll faster while running; slower heartbeat when stopped to detect external state.
+    const intervalMs = isRunnerActive ? 3000 : 10000;
+    pollIntervalRef.current = setInterval(checkRunner, intervalMs);
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void checkRunner();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [runnerStatus?.status]);
 

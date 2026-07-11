@@ -31,7 +31,7 @@ export async function runShellCommand(
   return new Promise((resolve, reject) => {
     const child = spawnLoginCommand(command, {
       cwd,
-      env: buildWorkspaceChildEnv(cwd, { mode: "production" }),
+      env: buildWorkspaceChildEnv(cwd, { mode: "development" }),
     });
 
     const handleData = (data: Buffer, isError = false) => {

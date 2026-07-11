@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireGithubClientId } from "@/lib/githubOAuth";
+import { saveGithubSession } from "@/lib/profiles";
 
 export async function POST(request: Request) {
   try {
@@ -54,9 +55,15 @@ export async function POST(request: Request) {
     const username = userData.login;
     const avatarUrl = userData.avatar_url || "";
 
+    await saveGithubSession({
+      token: accessToken,
+      login: username,
+      avatarUrl,
+    });
+
+    // Never return the access token to the browser — it is stored server-side only.
     return NextResponse.json({
       status: "success",
-      token: accessToken,
       username,
       avatarUrl,
     });

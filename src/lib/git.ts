@@ -270,13 +270,19 @@ export async function gitPush(cwd: string, token?: string): Promise<void> {
   await execGit(["push", "origin", branch], cwd, token);
 }
 
-// Helper to run read-only git commands; rejects on failure
-function runGit(args: string[], cwd: string): Promise<string> {
+// Helper to run read-only git commands; rejects on failure.
+// Default buffer is enough for status/branch lists; pass a larger maxBuffer for full diffs.
+function runGit(
+  args: string[],
+  cwd: string,
+  options: { maxBuffer?: number } = {}
+): Promise<string> {
+  const maxBuffer = options.maxBuffer ?? 2 * 1024 * 1024;
   return new Promise((resolve, reject) => {
     execFile(
       "git",
       args,
-      { cwd, encoding: "utf-8", timeout: 20000, maxBuffer: 32 * 1024 * 1024, env: augmentProcessEnv() },
+      { cwd, encoding: "utf-8", timeout: 20000, maxBuffer, env: augmentProcessEnv() },
       (error, stdout, stderr) => {
         if (error) {
           const msg = (stderr || error.message || `git ${args.join(" ")} failed`).trim();
@@ -377,7 +383,8 @@ export async function getCommitDiff(cwd: string, commitHash: string, relativeFil
   
   const diffOutput = await runGit(
     ["show", commitHash, "--unified=3", "--pretty=format:", "--", relativeFilePath],
-    cwd
+    cwd,
+    { maxBuffer: 16 * 1024 * 1024 }
   );
   if (!diffOutput) return [];
 
@@ -498,7 +505,8 @@ export interface RepoCommit {
 export async function getAllRepoCommits(cwd: string): Promise<RepoCommit[]> {
   const output = await runGit(
     ["log", "--all", "--pretty=format:%H|%an|%ad|%s|%P", "--date=format:%Y-%m-%d"],
-    cwd
+    cwd,
+    { maxBuffer: 8 * 1024 * 1024 }
   );
   if (!output) return [];
 
