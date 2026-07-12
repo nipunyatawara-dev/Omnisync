@@ -145,32 +145,22 @@ export default function BranchMergePanel({
         background: "rgba(22, 27, 34, 0.35)",
       }}
     >
-      <div
-        style={{
-          fontSize: "11px",
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: "0.5px",
-          color: "var(--color-fg-muted)",
-        }}
-      >
-        Merge branches
-      </div>
-
       <div style={{ display: "flex", flexWrap: "wrap", gap: "10px", alignItems: "flex-end" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "4px", flex: "1 1 140px" }}>
           <span style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>Into (target)</span>
           <select
+            className="form-control"
             value={target}
             onChange={(e) => setTarget(e.target.value)}
             style={{
               fontSize: "12px",
               fontFamily: "var(--font-mono)",
-              padding: "6px 8px",
+              padding: "6px 32px 6px 8px",
               borderRadius: "6px",
               border: "1px solid var(--color-border-default)",
               backgroundColor: "var(--color-bg-default)",
               color: "var(--color-fg-default)",
+              width: "100%",
             }}
           >
             {branches.map((b) => (
@@ -186,16 +176,18 @@ export default function BranchMergePanel({
         <label style={{ display: "flex", flexDirection: "column", gap: "4px", flex: "1 1 140px" }}>
           <span style={{ fontSize: "11px", color: "var(--color-fg-muted)" }}>From (source)</span>
           <select
+            className="form-control"
             value={source}
             onChange={(e) => setSource(e.target.value)}
             style={{
               fontSize: "12px",
               fontFamily: "var(--font-mono)",
-              padding: "6px 8px",
+              padding: "6px 32px 6px 8px",
               borderRadius: "6px",
               border: "1px solid var(--color-border-default)",
               backgroundColor: "var(--color-bg-default)",
               color: "var(--color-fg-default)",
+              width: "100%",
             }}
           >
             {branches.map((b) => (
@@ -221,7 +213,7 @@ export default function BranchMergePanel({
           className="btn btn-sm btn-primary"
           disabled={!canMerge}
           onClick={handleMerge}
-          style={{ fontSize: "11px", fontWeight: 600 }}
+          style={{ fontSize: "11px", fontWeight: 600, fontFamily: "var(--font-mono)" }}
           title={
             checkedPair !== pairKey
               ? "Check conflicts first"
@@ -230,7 +222,7 @@ export default function BranchMergePanel({
                 : undefined
           }
         >
-          {merging ? "Merging…" : `Merge ${source || "…"} → ${target || "…"}`}
+          {merging ? "…" : `${source || "…"} → ${target || "…"}`}
         </button>
       </div>
 

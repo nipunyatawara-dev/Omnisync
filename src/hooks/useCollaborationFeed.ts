@@ -6,13 +6,13 @@ import type { RepoCommit } from "@/types/dashboard";
 export function useCollaborationFeed(branches: string[]) {
   const [selectedBranches, setSelectedBranches] = useState<string[]>([]);
   const [commits, setCommits] = useState<RepoCommit[]>([]);
+  const [avatars, setAvatars] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [sessionAvatarUrl, setSessionAvatarUrl] = useState<string | undefined>();
   const [sessionEmail, setSessionEmail] = useState<string | undefined>();
   const [sessionLogin, setSessionLogin] = useState<string | undefined>();
   const initializedRef = useRef(false);
 
-  // Default = all branches once the list first loads; later preserve user picks.
   useEffect(() => {
     if (branches.length === 0) {
       initializedRef.current = false;
@@ -30,6 +30,7 @@ export function useCollaborationFeed(branches: string[]) {
   const loadCommits = useCallback(async (branchFilter: string[]) => {
     if (branchFilter.length === 0) {
       setCommits([]);
+      setAvatars({});
       return;
     }
     setIsLoading(true);
@@ -39,9 +40,10 @@ export function useCollaborationFeed(branches: string[]) {
       const data = await res.json();
       if (res.ok) {
         setCommits((data.commits as RepoCommit[]) || []);
+        setAvatars((data.avatars as Record<string, string>) || {});
       }
     } catch {
-      // leave existing commits
+      // leave existing
     } finally {
       setIsLoading(false);
     }
@@ -75,6 +77,7 @@ export function useCollaborationFeed(branches: string[]) {
     selectedBranches,
     setSelectedBranches,
     commits,
+    avatars,
     isLoading,
     reload: () => loadCommits(selectedBranches),
     sessionAvatarUrl,

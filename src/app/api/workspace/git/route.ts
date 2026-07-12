@@ -31,6 +31,7 @@ import {
   GitCommandError,
   GitPullNotFastForwardError,
 } from "@/lib/git";
+import { resolveAuthorAvatars } from "@/lib/githubAvatars";
 import { resolveSafePath, PathAccessError } from "@/lib/pathSafety";
 import {
   appendTerminalLine,
@@ -133,11 +134,15 @@ export async function GET(request: Request) {
           .map((b) => b.trim())
           .filter(Boolean);
         if (branchFilter.length === 0) {
-          return NextResponse.json({ commits: [] });
+          return NextResponse.json({ commits: [], avatars: {} });
         }
       }
       const commits = await getAllRepoCommits(cwd, branchFilter);
-      return NextResponse.json({ commits });
+      const avatars = await resolveAuthorAvatars(
+        cwd,
+        commits.map((c) => ({ email: c.email, name: c.author }))
+      );
+      return NextResponse.json({ commits, avatars });
     }
 
     if (action === "branches") {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import ConflictResolver from "@/components/ConflictResolver";
 import GitChangesPanel from "@/components/GitChangesPanel";
 import BranchFilterMultiSelect from "@/components/BranchFilterMultiSelect";
@@ -9,6 +9,71 @@ import CollaborationFeed from "@/components/CollaborationFeed";
 import type { SyncStatus } from "@/hooks/useGitSync";
 import { useCollaborationFeed } from "@/hooks/useCollaborationFeed";
 import type { UserProfile } from "@/lib/profiles";
+
+function CollapsibleSection({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          width: "100%",
+          gap: "8px",
+          padding: 0,
+          marginBottom: open ? "12px" : 0,
+          border: "none",
+          background: "transparent",
+          cursor: "pointer",
+          color: "inherit",
+          textAlign: "left",
+        }}
+      >
+        <span
+          style={{
+            fontSize: "11px",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            color: "var(--color-fg-muted)",
+            letterSpacing: "0.5px",
+          }}
+        >
+          {title}
+        </span>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          style={{
+            color: "var(--color-fg-muted)",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.15s ease",
+            flexShrink: 0,
+          }}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
 
 interface GitSyncViewProps {
   activeProfile: UserProfile | null;
@@ -52,6 +117,8 @@ export default function GitSyncView({
   feedRefreshKey = 0,
 }: GitSyncViewProps) {
   const feed = useCollaborationFeed(branches);
+  const [syncOpen, setSyncOpen] = useState(true);
+  const [mergeOpen, setMergeOpen] = useState(true);
 
   useEffect(() => {
     if (feedRefreshKey > 0) feed.reload();
@@ -73,20 +140,7 @@ export default function GitSyncView({
           flexShrink: 0,
         }}
       >
-        <div>
-          <h3
-            style={{
-              fontSize: "11px",
-              fontWeight: "700",
-              textTransform: "uppercase",
-              color: "var(--color-fg-muted)",
-              letterSpacing: "0.5px",
-              marginBottom: "12px",
-            }}
-          >
-            Repository Sync
-          </h3>
-
+        <CollapsibleSection title="Repository Sync" open={syncOpen} onToggle={() => setSyncOpen((v) => !v)}>
           <div
             id="tour-git-sync"
             className="card"
@@ -251,7 +305,7 @@ export default function GitSyncView({
               </div>
             )}
           </div>
-        </div>
+        </CollapsibleSection>
 
         <div id="tour-git-changes">
           <GitChangesPanel
@@ -395,10 +449,7 @@ export default function GitSyncView({
         }}
       >
         {selectedConflictFile ? (
-          <ConflictResolver
-            relativeFile={selectedConflictFile}
-            onResolved={onConflictResolved}
-          />
+          <ConflictResolver relativeFile={selectedConflictFile} onResolved={onConflictResolved} />
         ) : (
           <>
             <div
@@ -413,9 +464,7 @@ export default function GitSyncView({
               }}
             >
               <div>
-                <h2 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 4px" }}>
-                  Collaboration
-                </h2>
+                <h2 style={{ fontSize: "16px", fontWeight: 700, margin: "0 0 4px" }}>Collaboration</h2>
                 <p style={{ fontSize: "12px", color: "var(--color-fg-muted)", margin: 0 }}>
                   Commit activity across selected branches
                   {activeProfile?.workspacePath
@@ -429,21 +478,24 @@ export default function GitSyncView({
                 selected={feed.selectedBranches}
                 onChange={feed.setSelectedBranches}
               />
-              <BranchMergePanel
-                branches={branches}
-                currentBranch={currentBranch}
-                branchProtected={branchProtected}
-                showNotification={showNotification}
-                onConflictSelect={(file) => onSelectConflictFile(file)}
-                onMerged={() => {
-                  onRefresh();
-                  feed.reload();
-                }}
-              />
+              <CollapsibleSection title="Merge branches" open={mergeOpen} onToggle={() => setMergeOpen((v) => !v)}>
+                <BranchMergePanel
+                  branches={branches}
+                  currentBranch={currentBranch}
+                  branchProtected={branchProtected}
+                  showNotification={showNotification}
+                  onConflictSelect={(file) => onSelectConflictFile(file)}
+                  onMerged={() => {
+                    onRefresh();
+                    feed.reload();
+                  }}
+                />
+              </CollapsibleSection>
             </div>
             <div style={{ flex: 1, overflow: "hidden" }}>
               <CollaborationFeed
                 commits={feed.commits}
+                avatars={feed.avatars}
                 isLoading={feed.isLoading}
                 sessionAvatarUrl={feed.sessionAvatarUrl}
                 sessionEmail={feed.sessionEmail || activeProfile?.email}
