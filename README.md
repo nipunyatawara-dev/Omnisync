@@ -22,9 +22,11 @@
 * Multi-workspace profiles with one-click switching
 * Clone from GitHub or register an existing local folder
 * Integrated file tree, tabbed editor, and Markdown preview
-* Git branch switcher with ahead/behind sync status
+* Git branch switcher for local and remote branches, with ahead/behind sync status
+* Collaboration feed that tags commits with every branch that contains them
 * Three-pane merge conflict resolver
-* Environment diagnostics (Node engines, dependencies, git health)
+* Environment diagnostics (Node engines, dependencies, releases/deployments, git health)
+* Setup prompt to detect and install Node.js, Git, and GitHub CLI when missing
 * Built-in dev server runner with live stdout/stderr
 * Launch targets: browser, Electron shell, Xcode, and popular IDEs
 * Encrypted credential storage via the OS keychain
@@ -36,6 +38,7 @@
 - [Workspace](#workspace)
 - [Git sync & conflicts](#git-sync--conflicts)
 - [Diagnostics](#diagnostics)
+- [Settings](#settings)
 - [Dev runner](#dev-runner)
 - [Development](#development)
 - [Architecture](#architecture)
@@ -59,6 +62,8 @@ On first launch, OmniSync walks you through a short setup flow at `/setup`:
 
 Both paths create a profile, set it as the active session, and redirect to the dashboard.
 
+If Node.js, Git, or the GitHub CLI is missing, a bottom-right setup prompt appears on the select-workspace screen. You can expand a checklist, install tools from the app (Homebrew when available, otherwise a local copy), or dismiss the prompt.
+
 # Workspace
 
 The main dashboard (`/`) is organized around a sidebar with five views:
@@ -66,10 +71,10 @@ The main dashboard (`/`) is organized around a sidebar with five views:
 | Tab | What it does |
 | --- | --- |
 | **Workspace** | File tree, resizable editor panes, git history column, and line diff viewer |
-| **Git Sync** | Branch list, upstream status, and the conflict resolver |
-| **Diagnostics** | Environment audits and one-click dependency repairs |
+| **Git Sync** | Local/remote branches, collaboration feed, upstream status, and the conflict resolver |
+| **Diagnostics** | Environment audits, dependency inventory, releases/deployments, and repair commands |
 | **Timeline** | Repository commit calendar and history |
-| **Settings** | Workspace path, branch protection, auto-fetch, and custom run scripts |
+| **Settings** | Per-workspace Git identity/sync, workspace paths, run scripts, and (from setup) global defaults |
 
 **Workspace view** highlights:
 
@@ -82,7 +87,8 @@ The main dashboard (`/`) is organized around a sidebar with five views:
 
 OmniSync keeps you oriented relative to your remote:
 
-* Lists local and remote branches
+* Lists **local and remote** branches after clone (remote-only branches can be checked out as tracking branches)
+* Collaboration feed tags each commit with every branch that contains it
 * Shows commits **ahead** and **behind** upstream
 * Scans for merge conflict markers (`<<<<<<<`)
 
@@ -97,11 +103,20 @@ When conflicts are found, the **Git Sync** tab opens an interactive three-pane r
 The diagnostics scanner verifies your workspace is ready to run:
 
 * Node.js version vs. `engines.node` in `package.json`
-* Missing `node_modules` dependencies
+* Dependencies check — click the tile to see installed and missing package names
 * Git repository health
-* Project metadata (name, version, license)
+* Project metadata (name, version, license, description from `package.json`, GitHub, or README)
+* GitHub **Releases** and **Deployments** when the linked repo has them
 
 Warnings surface actionable fixes — including triggers to install missing packages.
+
+# Settings
+
+Settings behave differently depending on where you open them:
+
+* **Inside an open workspace** — **Settings → Git** shows that workspace’s git identity, auto-fetch, and branch protection.
+* **Select-workspace / setup Settings** — **Settings → Git** shows the **global** default git identity and sync defaults for every workspace.
+* **Settings → Workspaces** — Manage each workspace’s path, run scripts, and danger-zone delete. Deleting a non-active workspace stays in Settings; deleting the active one returns to workspace selection.
 
 # Dev runner
 
