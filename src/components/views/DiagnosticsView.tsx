@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Loader from "@/components/Loader";
 import type { DiagnosticDetails } from "@/types/dashboard";
 import { RunnerStatus } from "@/lib/runner";
@@ -18,6 +19,17 @@ interface DiagnosticsViewProps {
   onTerminalScroll: () => void;
 }
 
+function formatSpecDate(value: string): string {
+  if (!value) return "Unknown date";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export default function DiagnosticsView({
   diagData,
   isDiagLoading,
@@ -30,6 +42,14 @@ export default function DiagnosticsView({
   onMaintenanceAction,
   onTerminalScroll,
 }: DiagnosticsViewProps) {
+  const [depsOpen, setDepsOpen] = useState(false);
+
+  const dependencies = useMemo(() => diagData?.dependencies ?? [], [diagData?.dependencies]);
+  const installedCount = useMemo(
+    () => dependencies.filter((d) => d.installed).length,
+    [dependencies]
+  );
+
   return (
     <div
       id="tour-diagnostics-panel"
@@ -47,19 +67,9 @@ export default function DiagnosticsView({
         width: "100%",
       }}>
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <h2 style={{ fontSize: "20px", fontWeight: "700", letterSpacing: "-0.5px", margin: 0, color: "var(--color-fg-default)" }}>
-            Environment Diagnostics
-          </h2>
-          <span style={{
-            display: "inline-block",
-            width: "8px",
-            height: "8px",
-            borderRadius: "50%",
-            backgroundColor: isDiagLoading ? "var(--color-attention-fg)" : "#3fb950",
-            boxShadow: `0 0 8px ${isDiagLoading ? "var(--color-attention-fg)" : "#3fb950"}`,
-          }}></span>
-        </div>
+        <h2 style={{ fontSize: "20px", fontWeight: "700", letterSpacing: "-0.5px", margin: 0, color: "var(--color-fg-default)" }}>
+          Environment Diagnostics
+        </h2>
         <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
           Verify Node version engine limits, audit local module packages, and run automated script repairs.
         </p>
@@ -98,9 +108,31 @@ export default function DiagnosticsView({
               </div>
             </div>
 
-            <div className="card" style={{ padding: "20px", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: "130px", background: "rgba(22, 27, 34, 0.4)" }}>
+            <button
+              type="button"
+              className="card"
+              onClick={() => setDepsOpen(true)}
+              style={{
+                padding: "20px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+                minHeight: "130px",
+                background: "rgba(22, 27, 34, 0.4)",
+                textAlign: "left",
+                cursor: "pointer",
+                width: "100%",
+                color: "inherit",
+                border: "1px solid var(--color-border-default)",
+              }}
+            >
               <div>
-                <div style={{ fontSize: "10px", color: "var(--color-fg-muted)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px" }}>Dependencies Check</div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+                  <div style={{ fontSize: "10px", color: "var(--color-fg-muted)", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.5px" }}>Dependencies Check</div>
+                  <span style={{ fontSize: "10px", color: "var(--color-accent-fg, var(--color-fg-muted))", fontWeight: 600 }}>
+                    View list
+                  </span>
+                </div>
                 <div style={{ fontSize: "13px", marginTop: "8px" }}>
                   Total dependencies: <strong>{diagData.totalDependencies}</strong> packages
                 </div>
@@ -118,7 +150,7 @@ export default function DiagnosticsView({
                     display: "inline-block",
                     fontWeight: 600,
                   }}>
-                    ✓ node_modules clean
+                    ✓ Dependencies clean
                   </div>
                 ) : (
                   <div style={{
@@ -135,7 +167,7 @@ export default function DiagnosticsView({
                   </div>
                 )}
               </div>
-            </div>
+            </button>
           </div>
 
           <div className="card" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -184,7 +216,7 @@ export default function DiagnosticsView({
                   onClick={() => onMaintenanceAction("clean-modules")}
                   style={{ textAlign: "left", padding: "10px 14px", fontSize: "12px", display: "flex", flexDirection: "column", gap: "4px", marginTop: "auto" }}
                 >
-                  <span style={{ fontWeight: 600 }}>Reinstall node_modules</span>
+                  <span style={{ fontWeight: 600 }}>Reinstall dependencies</span>
                   <span style={{ fontSize: "10px", opacity: 0.8, fontWeight: "normal" }}>Deletes and recreates the target local packages</span>
                 </button>
               </div>
@@ -296,11 +328,232 @@ export default function DiagnosticsView({
               <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Description</div>
               <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", marginTop: "2px", lineHeight: "1.4" }}>{diagData.projectDescription || "No description available in package.json."}</div>
             </div>
+
+            {(diagData.releases?.length ?? 0) > 0 && (
+              <div>
+                <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Releases</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
+                  {diagData.releases!.map((release) => (
+                    <div
+                      key={release.tagName + release.publishedAt}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--color-border-default)",
+                        backgroundColor: "var(--color-bg-subtle)",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                          {release.htmlUrl ? (
+                            <a
+                              href={release.htmlUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                fontFamily: "var(--font-mono)",
+                                color: "var(--color-accent-fg, var(--color-fg-default))",
+                                textDecoration: "none",
+                              }}
+                            >
+                              {release.tagName}
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: "13px", fontWeight: 600, fontFamily: "var(--font-mono)" }}>
+                              {release.tagName}
+                            </span>
+                          )}
+                          {release.prerelease && (
+                            <span className="badge badge-warning" style={{ fontSize: "10px" }}>
+                              Pre-release
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: "11px", color: "var(--color-fg-muted)", marginTop: "2px" }}>
+                          {release.name !== release.tagName ? `${release.name} · ` : ""}
+                          {formatSpecDate(release.publishedAt)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(diagData.deployments?.length ?? 0) > 0 && (
+              <div>
+                <div style={{ fontSize: "11px", color: "var(--color-fg-subtle)" }}>Deployments</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
+                  {diagData.deployments!.map((deployment) => (
+                    <div
+                      key={deployment.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        padding: "8px 10px",
+                        borderRadius: "6px",
+                        border: "1px solid var(--color-border-default)",
+                        backgroundColor: "var(--color-bg-subtle)",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                          {deployment.url ? (
+                            <a
+                              href={deployment.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                fontSize: "13px",
+                                fontWeight: 600,
+                                color: "var(--color-accent-fg, var(--color-fg-default))",
+                                textDecoration: "none",
+                              }}
+                            >
+                              {deployment.environment}
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: "13px", fontWeight: 600 }}>{deployment.environment}</span>
+                          )}
+                          <span
+                            className={`badge ${
+                              deployment.state === "success"
+                                ? "badge-success"
+                                : deployment.state === "failure" || deployment.state === "error"
+                                  ? "badge-danger"
+                                  : "badge-info"
+                            }`}
+                            style={{ fontSize: "10px", textTransform: "capitalize" }}
+                          >
+                            {deployment.state}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "11px", color: "var(--color-fg-muted)", marginTop: "2px" }}>
+                          {deployment.description ? `${deployment.description} · ` : ""}
+                          {formatSpecDate(deployment.createdAt)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
         <div style={{ fontSize: "13px", color: "var(--color-fg-muted)", padding: "16px", textAlign: "center" }}>
           Environment diagnostics data unavailable.
+        </div>
+      )}
+
+      {depsOpen && diagData && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Installed dependencies"
+          onClick={() => setDepsOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            backgroundColor: "rgba(1, 4, 9, 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 1000,
+            padding: "24px",
+          }}
+        >
+          <div
+            className="card"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(560px, 100%)",
+              maxHeight: "min(70vh, 640px)",
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              backgroundColor: "var(--color-bg-default)",
+              border: "1px solid var(--color-border-default)",
+            }}
+          >
+            <div
+              style={{
+                padding: "16px 20px",
+                borderBottom: "1px solid var(--color-border-default)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "12px",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: "var(--color-fg-default)" }}>
+                  Dependencies
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--color-fg-muted)", marginTop: "2px" }}>
+                  {installedCount} installed · {diagData.missingDependencies.length} missing · {diagData.totalDependencies} total
+                </div>
+              </div>
+              <button type="button" className="btn btn-sm" onClick={() => setDepsOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ overflowY: "auto", padding: "8px 0" }}>
+              {dependencies.length === 0 ? (
+                <div style={{ padding: "24px 20px", fontSize: "13px", color: "var(--color-fg-muted)" }}>
+                  No dependencies listed in package.json.
+                </div>
+              ) : (
+                dependencies.map((dep) => (
+                  <div
+                    key={dep.name}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      padding: "10px 20px",
+                      borderBottom: "1px solid var(--color-border-muted, var(--color-border-default))",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: "13px",
+                          fontWeight: 600,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--color-fg-default)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {dep.name}
+                      </div>
+                      <div style={{ fontSize: "11px", color: "var(--color-fg-muted)", marginTop: "2px" }}>
+                        {dep.version}
+                      </div>
+                    </div>
+                    <span
+                      className={`badge ${dep.installed ? "badge-success" : "badge-danger"}`}
+                      style={{ fontSize: "10px", flexShrink: 0 }}
+                    >
+                      {dep.installed ? "Installed" : "Missing"}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

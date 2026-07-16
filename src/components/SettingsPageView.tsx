@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import GlobalSettingsView from "@/components/GlobalSettingsView";
+import WorkspaceGitSettingsView from "@/components/WorkspaceGitSettingsView";
 import WorkspaceSettingsView from "@/components/WorkspaceSettingsView";
 import { useGlobalSettings } from "@/hooks/useGlobalSettings";
 import { UserProfile } from "@/lib/profiles";
@@ -72,6 +73,9 @@ export default function SettingsPageView({
   }, [loadProfiles]);
 
   const selectedProfile = profiles.find((p) => p.id === selectedWorkspaceId) ?? null;
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? null;
+  /** Inside a workspace: Git tab is workspace-scoped. From select-workspace Settings: global. */
+  const showGlobalGit = mode === "page";
 
   const handleProfileUpdated = (updated: UserProfile) => {
     setProfiles((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
@@ -80,17 +84,21 @@ export default function SettingsPageView({
     }
   };
 
-  const handleProfileDeleted = (deletedId: string) => {
+  const handleProfileDeleted = (deletedId: string, wasActive: boolean) => {
     const remaining = profiles.filter((p) => p.id !== deletedId);
     setProfiles(remaining);
+
+    // Only leave settings when the active workspace was removed.
+    if (wasActive || deletedId === activeProfileId) {
+      setActiveProfileId(remaining[0]?.id ?? null);
+      onActiveProfileDeleted?.();
+      return;
+    }
+
     if (selectedWorkspaceId === deletedId) {
       const nextId =
         remaining.find((p) => p.id === activeProfileId)?.id ?? remaining[0]?.id ?? null;
       setSelectedWorkspaceId(nextId);
-    }
-    if (deletedId === activeProfileId) {
-      setActiveProfileId(remaining[0]?.id ?? null);
-      onActiveProfileDeleted?.();
     }
   };
 
@@ -109,9 +117,11 @@ export default function SettingsPageView({
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        height: mode === "embedded" ? "100%" : "100vh",
+        minHeight: 0,
+        height: mode === "embedded" ? undefined : "100vh",
         overflow: "hidden",
         backgroundColor: "var(--color-bg-default)",
+        width: "100%",
       }}
     >
       {mode === "page" && (
@@ -225,7 +235,7 @@ export default function SettingsPageView({
               width: "100%",
             }}
           >
-            {(activeTab === "general" || activeTab === "git") && (
+            {activeTab === "general" && (
               <>
                 <div style={{ marginBottom: "24px" }}>
                   <h2
@@ -237,12 +247,10 @@ export default function SettingsPageView({
                       color: "var(--color-fg-default)",
                     }}
                   >
-                    {activeTab === "general" ? "General" : "Git Configuration"}
+                    General
                   </h2>
                   <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
-                    {activeTab === "general"
-                      ? "System preferences that apply across all workspaces."
-                      : "Default git identity and sync behavior for every workspace."}
+                    System preferences that apply across all workspaces.
                   </p>
                 </div>
 
@@ -253,8 +261,61 @@ export default function SettingsPageView({
                   message={globalSettings.message}
                   onUpdate={globalSettings.updateField}
                   onSave={globalSettings.save}
-                  section={activeTab}
+                  section="general"
                 />
+              </>
+            )}
+
+            {activeTab === "git" && (
+              <>
+                <div style={{ marginBottom: "24px" }}>
+                  <h2
+                    style={{
+                      fontSize: "20px",
+                      fontWeight: 700,
+                      letterSpacing: "-0.5px",
+                      margin: 0,
+                      color: "var(--color-fg-default)",
+                    }}
+                  >
+                    Git Configuration
+                  </h2>
+                  <p style={{ fontSize: "13px", color: "var(--color-fg-muted)", marginTop: "4px" }}>
+                    {showGlobalGit
+                      ? "Default git identity and sync behavior for every workspace."
+                      : `Git identity and sync behavior for ${
+                          activeProfile
+                            ? workspaceLabel(activeProfile)
+                            : "this workspace"
+                        }.`}
+                  </p>
+                </div>
+
+                {showGlobalGit ? (
+                  <GlobalSettingsView
+                    settings={globalSettings.settings}
+                    isLoading={globalSettings.isLoading}
+                    isSaving={globalSettings.isSaving}
+                    message={globalSettings.message}
+                    onUpdate={globalSettings.updateField}
+                    onSave={globalSettings.save}
+                    section="git"
+                  />
+                ) : isLoadingProfiles ? (
+                  <p style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>
+                    Loading workspace…
+                  </p>
+                ) : activeProfile ? (
+                  <WorkspaceGitSettingsView
+                    key={activeProfile.id}
+                    profile={activeProfile}
+                    onProfileUpdated={handleProfileUpdated}
+                  />
+                ) : (
+                  <p style={{ fontSize: "13px", color: "var(--color-fg-muted)" }}>
+                    No active workspace selected. Choose a workspace first, then open Settings.
+                  </p>
+                )}
               </>
             )}
 
@@ -374,6 +435,7 @@ export default function SettingsPageView({
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {selectedProfile ? (
                     <WorkspaceSettingsView
+                      key={selectedProfile.id}
                       profile={selectedProfile}
                       isActive={selectedProfile.id === activeProfileId}
                       onProfileUpdated={handleProfileUpdated}

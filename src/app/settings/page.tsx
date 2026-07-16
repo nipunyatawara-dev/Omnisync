@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import SettingsPageView, { type SettingsTab } from "@/components/SettingsPageView";
+import { clearWorkspaceReady } from "@/lib/launchSession";
 
 const VALID_TABS = new Set<SettingsTab>(["general", "git", "workspace"]);
 
@@ -18,6 +19,7 @@ function SettingsPageContent() {
       defaultTab={defaultTab}
       returnTo={returnTo}
       onActiveProfileDeleted={() => {
+        clearWorkspaceReady();
         window.location.href = "/setup";
       }}
     />

@@ -147,8 +147,9 @@ export default function GlobalSettingsView({
         <div className="card" style={cardStyle}>
           <h3 style={sectionTitleStyle}>Git Identity</h3>
           <p style={{ ...hintStyle, margin: 0 }}>
-            Pulled from your git configuration when not yet saved in OmniSync. Applied to the active
-            workspace repository when you save.
+            Global default author for OmniSync. Used as the fallback for workspaces and applied to
+            the active repository when you save. Edit a workspace&apos;s own identity from that
+            workspace&apos;s Settings → Git.
           </p>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>

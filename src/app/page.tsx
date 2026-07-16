@@ -344,7 +344,16 @@ export default function DashboardPage() {
       )}
 
       {activeTab === "settings" && (
-        <div id="tour-settings-panel" style={{ flex: 1, height: "100%", overflow: "hidden" }}>
+        <div
+          id="tour-settings-panel"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
           <SettingsPageView
             mode="embedded"
             onActiveProfileUpdated={(updatedProfile) => {
@@ -366,7 +375,10 @@ export default function DashboardPage() {
                 );
               }
             }}
-            onActiveProfileDeleted={() => router.push("/setup")}
+            onActiveProfileDeleted={() => {
+              clearWorkspaceReady();
+              router.push("/setup");
+            }}
           />
         </div>
       )}

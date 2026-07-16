@@ -7,7 +7,8 @@ interface WorkspaceSettingsViewProps {
   profile: UserProfile;
   isActive?: boolean;
   onProfileUpdated: (updated: UserProfile) => void;
-  onProfileDeleted?: (deletedId: string) => void;
+  /** Second arg is true when the deleted workspace was the active one. */
+  onProfileDeleted?: (deletedId: string, wasActive: boolean) => void;
   embedded?: boolean;
 }
 
@@ -21,8 +22,6 @@ interface WorkspaceDiagnostics {
   missingDependencies: string[];
   currentBranch: string | null;
   remoteUrl: string | null;
-  gitAuthorName?: string;
-  gitAuthorEmail?: string;
   isNodeCompatible: boolean;
   nodeVersion: string;
   npmVersion: string;
@@ -199,9 +198,6 @@ export default function WorkspaceSettingsView({
   const [devPort, setDevPort] = useState<number>(profile.port ?? 3000);
   const [runCommand, setRunCommand] = useState<string>(profile.runCommand ?? "npm run dev");
   const [buildCommand, setBuildCommand] = useState<string>(profile.buildCommand ?? "npm run build");
-  const [gitAuthorName, setGitAuthorName] = useState("");
-  const [gitAuthorEmail, setGitAuthorEmail] = useState("");
-
   const [diagnostics, setDiagnostics] = useState<WorkspaceDiagnostics | null>(null);
   const [syncSnapshot, setSyncSnapshot] = useState<SyncSnapshot | null>(null);
   const [isLoadingInfo, setIsLoadingInfo] = useState(true);
@@ -232,8 +228,6 @@ export default function WorkspaceSettingsView({
       if (diagRes.ok) {
         const data = await diagRes.json();
         setDiagnostics(data);
-        setGitAuthorName(data.gitAuthorName || "");
-        setGitAuthorEmail(data.gitAuthorEmail || "");
       }
 
       if (syncRes.ok) {
@@ -263,8 +257,6 @@ export default function WorkspaceSettingsView({
     setDevPort(profile.port ?? 3000);
     setRunCommand(profile.runCommand ?? "npm run dev");
     setBuildCommand(profile.buildCommand ?? "npm run build");
-    setGitAuthorName("");
-    setGitAuthorEmail("");
     setMessage(null);
   }, [profile]);
 
@@ -313,28 +305,6 @@ export default function WorkspaceSettingsView({
 
       const data = await res.json();
       if (data.success && data.profile) {
-        const identityRes = await fetch("/api/workspace/git", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "set-identity",
-            profileId: profile.id,
-            name: gitAuthorName,
-            email: gitAuthorEmail,
-          }),
-        });
-
-        if (!identityRes.ok) {
-          const identityData = await identityRes.json();
-          setMessage({
-            type: "error",
-            text: identityData.error || "Workspace saved, but git identity update failed.",
-          });
-          onProfileUpdated(data.profile);
-          loadWorkspaceInfo();
-          return;
-        }
-
         setMessage({ type: "success", text: "Workspace settings saved." });
         onProfileUpdated(data.profile);
         loadWorkspaceInfo();
@@ -402,34 +372,34 @@ export default function WorkspaceSettingsView({
     );
     if (!confirmed) return;
 
+    const deletedId = profile.id;
+    const deletedWasActive = Boolean(isActive);
+
     setIsDeleting(true);
     try {
-      await fetch("/api/profiles", {
+      const res = await fetch("/api/profiles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", id: profile.id }),
+        body: JSON.stringify({ action: "delete", id: deletedId }),
       });
-
-      onProfileDeleted?.(profile.id);
-
-      if (!onProfileDeleted) {
-        const profilesRes = await fetch("/api/profiles");
-        const data = await profilesRes.json();
-        const remainingProfiles = (data.profiles || []) as UserProfile[];
-        const nextActiveId = data.activeProfileId as string | null;
-
-        if (remainingProfiles.length > 0 && nextActiveId) {
-          const nextProfile = remainingProfiles.find((p) => p.id === nextActiveId);
-          if (nextProfile?.workspacePath) {
-            window.location.href = "/";
-            return;
-          }
-          window.location.href = "/setup";
-          return;
-        }
-
-        window.location.href = "/setup";
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert(data.error || "Error deleting workspace connection.");
+        return;
       }
+
+      if (onProfileDeleted) {
+        onProfileDeleted(deletedId, deletedWasActive);
+        return;
+      }
+
+      // Fallback when used without a parent delete handler.
+      if (deletedWasActive) {
+        window.location.href = "/setup";
+        return;
+      }
+
+      setMessage({ type: "success", text: "Workspace removed from OmniSync." });
     } catch (e) {
       console.error(e);
       alert("Error deleting workspace connection.");
@@ -613,38 +583,6 @@ export default function WorkspaceSettingsView({
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={labelStyle} htmlFor="workspace-git-name">
-                Git author name
-              </label>
-              <input
-                id="workspace-git-name"
-                type="text"
-                className="form-control"
-                value={gitAuthorName}
-                onChange={(e) => setGitAuthorName(e.target.value)}
-                placeholder="John Doe"
-              />
-            </div>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-              <label style={labelStyle} htmlFor="workspace-git-email">
-                Git author email
-              </label>
-              <input
-                id="workspace-git-email"
-                type="email"
-                className="form-control"
-                value={gitAuthorEmail}
-                onChange={(e) => setGitAuthorEmail(e.target.value)}
-                placeholder="john@example.com"
-              />
-            </div>
-          </div>
-          <span style={hintStyle}>
-            Loaded from this repository&apos;s git configuration. Falls back to your global git config when unset.
-          </span>
         </div>
 
         <div className="card" style={cardStyle}>

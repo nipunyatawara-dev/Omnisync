@@ -32,6 +32,186 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+function parseGithubOwnerRepo(remoteUrl: string | null): { owner: string; repo: string } | null {
+  if (!remoteUrl) return null;
+  const match = remoteUrl
+    .trim()
+    .replace(/\.git$/, "")
+    .match(/github\.com[:/]([^/]+)\/([^/]+)$/i);
+  if (!match) return null;
+  return { owner: match[1], repo: match[2] };
+}
+
+function githubApiHeaders(token?: string): HeadersInit {
+  return {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "OmniSync",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+async function fetchGithubRepoDescription(
+  remoteUrl: string | null,
+  token?: string
+): Promise<string | null> {
+  const parsed = parseGithubOwnerRepo(remoteUrl);
+  if (!parsed) return null;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
+      headers: githubApiHeaders(token),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { description?: string | null };
+    const description = data.description?.trim();
+    return description || null;
+  } catch {
+    return null;
+  }
+}
+
+interface GithubReleaseSummary {
+  tagName: string;
+  name: string;
+  publishedAt: string;
+  prerelease: boolean;
+  htmlUrl: string;
+}
+
+interface GithubDeploymentSummary {
+  id: number;
+  environment: string;
+  description: string;
+  createdAt: string;
+  state: string;
+  url?: string;
+}
+
+async function fetchGithubReleases(
+  remoteUrl: string | null,
+  token?: string,
+  limit = 5
+): Promise<GithubReleaseSummary[]> {
+  const parsed = parseGithubOwnerRepo(remoteUrl);
+  if (!parsed) return [];
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/releases?per_page=${limit}`,
+      { headers: githubApiHeaders(token), cache: "no-store" }
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<{
+      tag_name?: string;
+      name?: string | null;
+      published_at?: string | null;
+      prerelease?: boolean;
+      html_url?: string;
+      draft?: boolean;
+    }>;
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((r) => !r.draft && r.tag_name)
+      .map((r) => ({
+        tagName: r.tag_name || "",
+        name: (r.name || r.tag_name || "").trim(),
+        publishedAt: r.published_at || "",
+        prerelease: !!r.prerelease,
+        htmlUrl: r.html_url || "",
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchGithubDeployments(
+  remoteUrl: string | null,
+  token?: string,
+  limit = 5
+): Promise<GithubDeploymentSummary[]> {
+  const parsed = parseGithubOwnerRepo(remoteUrl);
+  if (!parsed) return [];
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${parsed.owner}/${parsed.repo}/deployments?per_page=${limit}`,
+      { headers: githubApiHeaders(token), cache: "no-store" }
+    );
+    if (!res.ok) return [];
+    const data = (await res.json()) as Array<{
+      id?: number;
+      environment?: string;
+      description?: string | null;
+      created_at?: string;
+      statuses_url?: string;
+      url?: string;
+    }>;
+    if (!Array.isArray(data)) return [];
+
+    const summaries = await Promise.all(
+      data.slice(0, limit).map(async (d) => {
+        let state = "unknown";
+        let statusUrl = "";
+        if (d.statuses_url) {
+          try {
+            const statusRes = await fetch(`${d.statuses_url}?per_page=1`, {
+              headers: githubApiHeaders(token),
+              cache: "no-store",
+            });
+            if (statusRes.ok) {
+              const statuses = (await statusRes.json()) as Array<{
+                state?: string;
+                environment_url?: string | null;
+                target_url?: string | null;
+              }>;
+              if (Array.isArray(statuses) && statuses[0]) {
+                state = statuses[0].state || state;
+                statusUrl = statuses[0].environment_url || statuses[0].target_url || "";
+              }
+            }
+          } catch {
+            // keep unknown state
+          }
+        }
+        return {
+          id: d.id || 0,
+          environment: d.environment || "unknown",
+          description: (d.description || "").trim(),
+          createdAt: d.created_at || "",
+          state,
+          url: statusUrl || undefined,
+        };
+      })
+    );
+    return summaries.filter((d) => d.id > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function readReadmeDescription(cwd: string): Promise<string | null> {
+  for (const name of ["README.md", "readme.md", "README"]) {
+    try {
+      const content = await fs.readFile(path.join(cwd, name), "utf-8");
+      const chunks: string[] = [];
+      for (const raw of content.split("\n")) {
+        const line = raw.trim();
+        if (!line) {
+          if (chunks.length > 0) break;
+          continue;
+        }
+        if (line.startsWith("#")) continue;
+        if (line.startsWith("![") || line.startsWith("[![")) continue;
+        chunks.push(line.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1"));
+        if (chunks.join(" ").length > 220) break;
+      }
+      const text = chunks.join(" ").replace(/\s+/g, " ").trim();
+      if (text) return text.length > 240 ? `${text.slice(0, 237)}…` : text;
+    } catch {
+      // try next filename
+    }
+  }
+  return null;
+}
+
 export async function GET(request: Request) {
   const profileId = new URL(request.url).searchParams.get("profileId");
   const profile = profileId ? await getProfileById(profileId) : await getActiveProfile();
@@ -55,11 +235,12 @@ export async function GET(request: Request) {
   let enginesNode = "*";
   let dependencies: Record<string, string> = {};
   const missingDeps: string[] = [];
+  const dependencyDetails: { name: string; version: string; installed: boolean }[] = [];
   const packageJsonExists = await pathExists(packageJsonPath);
 
   let projectName = "Unnamed Project";
   let projectVersion = "1.0.0";
-  let projectDescription = "No description available";
+  let projectDescription = "";
   let projectLicense = "MIT";
 
   if (packageJsonExists) {
@@ -71,18 +252,21 @@ export async function GET(request: Request) {
 
       projectName = pkg.name || projectName;
       projectVersion = pkg.version || projectVersion;
-      projectDescription = pkg.description || projectDescription;
+      projectDescription = typeof pkg.description === "string" ? pkg.description.trim() : "";
       projectLicense = pkg.license || projectLicense;
 
       const depChecks = await Promise.all(
         Object.keys(dependencies).map(async (dep) => ({
           dep,
+          version: dependencies[dep],
           exists: await pathExists(path.join(cwd, "node_modules", dep)),
         }))
       );
-      for (const { dep, exists } of depChecks) {
+      for (const { dep, version, exists } of depChecks) {
+        dependencyDetails.push({ name: dep, version, installed: exists });
         if (!exists) missingDeps.push(dep);
       }
+      dependencyDetails.sort((a, b) => a.name.localeCompare(b.name));
     } catch {}
   }
 
@@ -146,6 +330,19 @@ export async function GET(request: Request) {
     } catch {}
   }
 
+  const [githubDescription, releases, deployments] = await Promise.all([
+    projectDescription
+      ? Promise.resolve(null)
+      : fetchGithubRepoDescription(remoteUrl, profile.gitToken),
+    fetchGithubReleases(remoteUrl, profile.gitToken),
+    fetchGithubDeployments(remoteUrl, profile.gitToken),
+  ]);
+
+  if (!projectDescription) {
+    projectDescription =
+      githubDescription || (await readReadmeDescription(cwd)) || "No description available";
+  }
+
   return NextResponse.json({
     nodeVersion,
     npmVersion,
@@ -154,6 +351,7 @@ export async function GET(request: Request) {
     packageJsonExists,
     totalDependencies: Object.keys(dependencies).length,
     missingDependencies: missingDeps,
+    dependencies: dependencyDetails,
     gitStatus,
     projectName,
     projectVersion,
@@ -167,6 +365,8 @@ export async function GET(request: Request) {
     remoteUrl,
     gitAuthorName,
     gitAuthorEmail,
+    releases,
+    deployments,
   });
 }
 

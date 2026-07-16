@@ -9,6 +9,29 @@ export interface RepoCommit {
   branches?: string[];
 }
 
+export interface DiagnosticDependency {
+  name: string;
+  version: string;
+  installed: boolean;
+}
+
+export interface DiagnosticRelease {
+  tagName: string;
+  name: string;
+  publishedAt: string;
+  prerelease: boolean;
+  htmlUrl: string;
+}
+
+export interface DiagnosticDeployment {
+  id: number;
+  environment: string;
+  description: string;
+  createdAt: string;
+  state: string;
+  url?: string;
+}
+
 export interface DiagnosticDetails {
   nodeVersion: string;
   npmVersion: string;
@@ -17,6 +40,7 @@ export interface DiagnosticDetails {
   packageJsonExists: boolean;
   totalDependencies: number;
   missingDependencies: string[];
+  dependencies?: DiagnosticDependency[];
   nodeModulesExists?: boolean;
   gitStatus: string;
   projectName?: string;
@@ -26,6 +50,8 @@ export interface DiagnosticDetails {
   username?: string;
   hostname?: string;
   folderName?: string;
+  releases?: DiagnosticRelease[];
+  deployments?: DiagnosticDeployment[];
 }
 
 export type DashboardTab = "workspace" | "git" | "diagnostics" | "settings" | "timeline";
