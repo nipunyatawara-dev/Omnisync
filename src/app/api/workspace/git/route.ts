@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { getActiveProfile, getGithubToken, getProfileById } from "@/lib/profiles";
 import { getGlobalSettings } from "@/lib/globalSettings";
-import { execFile } from "child_process";
 import {
   getCurrentBranch,
   getBranches,
+  checkoutBranch,
   getSyncStatus,
   getFileCommits,
   getCommitDiff,
@@ -364,15 +364,7 @@ export async function POST(request: Request) {
 
       logGitTerminalCommand(cwd, `git checkout ${branch}`);
 
-      await new Promise<void>((resolve, reject) => {
-        execFile("git", ["checkout", branch], { cwd, timeout: 15000 }, (err, _stdout, stderr) => {
-          if (err) {
-            reject(new GitCommandError((stderr || err.message).trim()));
-          } else {
-            resolve();
-          }
-        });
-      });
+      await checkoutBranch(cwd, branch);
 
       logGitTerminalResult(`Switched to branch '${branch}'.`);
 

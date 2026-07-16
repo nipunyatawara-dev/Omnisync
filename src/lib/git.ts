@@ -328,11 +328,84 @@ export async function getCurrentBranch(cwd: string): Promise<string> {
   }
 }
 
-// List all local branches
-export async function getBranches(cwd: string): Promise<string[]> {
+/** Short name from a remote-tracking ref (`origin/dev` → `dev`). Skips remote HEAD. */
+export function shortNameFromRemoteRef(ref: string): string | null {
+  const trimmed = ref.trim();
+  if (!trimmed || trimmed.includes("->") || trimmed.endsWith("/HEAD")) return null;
+  const slash = trimmed.indexOf("/");
+  if (slash < 0) return null;
+  const short = trimmed.slice(slash + 1);
+  return short || null;
+}
+
+/** Local branches only (`refs/heads/*`). */
+export async function getLocalBranches(cwd: string): Promise<string[]> {
   const output = await runGit(["branch", "--format=%(refname:short)"], cwd);
   if (!output) return [];
   return output.split("\n").map((b) => b.trim()).filter(Boolean);
+}
+
+/**
+ * Local branch names plus remote-tracking branches as short names (deduped).
+ * After a normal clone this includes remote-only branches like `dev` from `origin/dev`.
+ */
+export async function getBranches(cwd: string): Promise<string[]> {
+  const names = new Set<string>(await getLocalBranches(cwd));
+
+  try {
+    const remote = await runGit(
+      ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+      cwd
+    );
+    for (const line of (remote || "").split("\n")) {
+      const short = shortNameFromRemoteRef(line);
+      if (short) names.add(short);
+    }
+  } catch {
+    // No remotes yet — local list is enough.
+  }
+
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Map a short branch name to a git ref. Prefers the local branch, then `origin/<name>`,
+ * then any other remote-tracking match.
+ */
+export async function resolveBranchRef(cwd: string, branch: string): Promise<string | null> {
+  if (!branch) return null;
+  const local = await getLocalBranches(cwd);
+  if (local.includes(branch)) return branch;
+
+  try {
+    const remote = await runGit(
+      ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+      cwd
+    );
+    const matches = (remote || "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => shortNameFromRemoteRef(l) === branch);
+    return matches.find((m) => m.startsWith("origin/")) || matches[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Checkout a local branch, or create a local tracking branch from a remote-only ref. */
+export async function checkoutBranch(cwd: string, branch: string): Promise<void> {
+  const local = await getLocalBranches(cwd);
+  if (local.includes(branch)) {
+    await execGit(["checkout", branch], cwd);
+    return;
+  }
+
+  const remoteRef = await resolveBranchRef(cwd, branch);
+  if (!remoteRef || remoteRef === branch) {
+    throw new GitCommandError(`Unknown branch '${branch}'`);
+  }
+
+  await execGit(["checkout", "-b", branch, "--track", remoteRef], cwd);
 }
 
 // Get synchronization status relative to upstream
@@ -526,7 +599,7 @@ export interface MergeBranchesResult {
   message?: string;
 }
 
-/** Extract local branch names from git log %D decorate string. */
+/** Extract branch names from git log %D decorate string (local + remote short names). */
 export function parseDecorateBranches(decorate: string): string[] {
   if (!decorate.trim()) return [];
   const names = new Set<string>();
@@ -535,11 +608,15 @@ export function parseDecorateBranches(decorate: string): string[] {
     if (!part || part.startsWith("tag:")) continue;
     if (part.startsWith("HEAD -> ")) part = part.slice("HEAD -> ".length).trim();
     if (part.startsWith("refs/heads/")) part = part.slice("refs/heads/".length);
-    // Skip remotes
-    if (part.startsWith("origin/") || part.startsWith("refs/remotes/")) continue;
-    if (part.includes("/")) {
-      // likely remote-tracking unless it's a local branch with slash (feature/foo)
-      // Keep paths that don't start with a known remote prefix — already filtered origin/
+    if (part.startsWith("refs/remotes/")) {
+      part = part.slice("refs/remotes/".length);
+      const short = shortNameFromRemoteRef(part);
+      if (short) part = short;
+      else continue;
+    } else if (part.startsWith("origin/")) {
+      const short = shortNameFromRemoteRef(part);
+      if (short) part = short;
+      else continue;
     }
     if (part && part !== "HEAD") names.add(part);
   }
@@ -593,16 +670,23 @@ function parseRepoCommitLine(line: string): RepoCommit | null {
 }
 
 /**
- * Repo-wide commit log. Pass branch names to limit history; omit / empty = all local branches.
+ * Repo-wide commit log. Pass branch names to limit history; omit / empty = all branches
+ * (local + remote-tracking, resolved to usable refs).
  */
 export async function getAllRepoCommits(
   cwd: string,
   branches?: string[]
 ): Promise<RepoCommit[]> {
-  const refs =
+  const names =
     branches && branches.length > 0
       ? branches
       : await getBranches(cwd);
+
+  const refs: string[] = [];
+  for (const name of names) {
+    const ref = await resolveBranchRef(cwd, name);
+    if (ref) refs.push(ref);
+  }
 
   if (refs.length === 0) return [];
 
@@ -653,8 +737,9 @@ export async function previewMerge(
     return { clean: false, conflicts: [], message: "Choose two different branches." };
   }
 
-  const branches = await getBranches(cwd);
-  if (!branches.includes(source) || !branches.includes(target)) {
+  const sourceRef = await resolveBranchRef(cwd, source);
+  const targetRef = await resolveBranchRef(cwd, target);
+  if (!sourceRef || !targetRef) {
     return { clean: false, conflicts: [], message: "Unknown branch selected." };
   }
 
@@ -663,7 +748,7 @@ export async function previewMerge(
     const output = await new Promise<string>((resolve, reject) => {
       execFile(
         "git",
-        ["merge-tree", "--write-tree", "--name-only", target, source],
+        ["merge-tree", "--write-tree", "--name-only", targetRef, sourceRef],
         { cwd, encoding: "utf-8", timeout: 30000, maxBuffer: 4 * 1024 * 1024, env: augmentProcessEnv() },
         (error, stdout, stderr) => {
           const text = `${stdout || ""}\n${stderr || ""}`.trim();
@@ -696,8 +781,8 @@ export async function previewMerge(
   } catch (err) {
     // Fallback: classic merge-tree via merge-base
     try {
-      const base = await runGit(["merge-base", target, source], cwd);
-      const treeOut = await runGit(["merge-tree", base, target, source], cwd, {
+      const base = await runGit(["merge-base", targetRef, sourceRef], cwd);
+      const treeOut = await runGit(["merge-tree", base, targetRef, sourceRef], cwd, {
         maxBuffer: 4 * 1024 * 1024,
       });
       const conflictFiles = new Set<string>();
@@ -762,8 +847,9 @@ export async function mergeBranches(
     };
   }
 
-  const branches = await getBranches(cwd);
-  if (!branches.includes(source) || !branches.includes(target)) {
+  const sourceRef = await resolveBranchRef(cwd, source);
+  const targetRef = await resolveBranchRef(cwd, target);
+  if (!sourceRef || !targetRef) {
     return {
       status: "error",
       conflicts: [],
@@ -776,11 +862,11 @@ export async function mergeBranches(
 
   const current = await getCurrentBranch(cwd);
   if (current !== target) {
-    await execGit(["checkout", target], cwd);
+    await checkoutBranch(cwd, target);
   }
 
   try {
-    await execGit(["merge", "--no-edit", source], cwd);
+    await execGit(["merge", "--no-edit", sourceRef], cwd);
     return {
       status: "ok",
       conflicts: [],

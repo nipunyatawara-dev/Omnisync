@@ -177,6 +177,7 @@ export default function DashboardPage() {
 
   const refreshAfterGitSync = (action: "fetch" | "pull" | "push") => {
     timeline.loadAllCommits();
+    loadGitBranches();
     if (action === "pull") {
       workspace.loadWorkspaceFiles();
       workspace.setGitChangesRefreshKey((key) => key + 1);
