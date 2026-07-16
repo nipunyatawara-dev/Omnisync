@@ -4,7 +4,7 @@
 
 # OmniSync
 
-[![Version](https://img.shields.io/badge/version-0.3b-blue)](https://github.com/nipunyatawara-dev/Omnisync)
+[![Version](https://img.shields.io/badge/version-0.4b-blue)](https://github.com/nipunyatawara-dev/Omnisync)
 [![Platform](https://img.shields.io/badge/platform-macOS%20(first)-lightgrey)](https://github.com/nipunyatawara-dev/Omnisync)
 [![Stack](https://img.shields.io/badge/stack-Electron%20%2B%20Next.js-green)](https://github.com/nipunyatawara-dev/Omnisync)
 

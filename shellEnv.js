@@ -5,7 +5,7 @@ let cachedLoginPath = null;
 const commandCache = new Map();
 
 /** Only these tool names may be resolved via the login shell. */
-const ALLOWED_RESOLVE_COMMANDS = new Set(["git", "npm", "node", "npx", "yarn", "pnpm"]);
+const ALLOWED_RESOLVE_COMMANDS = new Set(["git", "npm", "node", "npx", "yarn", "pnpm", "gh", "brew"]);
 
 function getLoginShell() {
   return process.env.SHELL || "/bin/zsh";
@@ -134,10 +134,18 @@ function getLoginShellPath() {
  * full process.env — that re-polluted stripped workspace child envs (TURBO_*,
  * NEXT_*, etc.) and broke `next dev` / Turbopack.
  */
+function getOmniSyncToolsBin() {
+  const userData = process.env.OMNISYNC_USER_DATA_DIR;
+  if (!userData) return null;
+  return pathJoin(userData, "tools", "bin");
+}
+
 function augmentProcessEnv(base = process.env) {
+  const loginPath = getLoginShellPath();
+  const toolsBin = getOmniSyncToolsBin();
   return {
     ...baseSpawnEnv(base),
-    PATH: getLoginShellPath(),
+    PATH: toolsBin ? `${toolsBin}:${loginPath}` : loginPath,
   };
 }
 
@@ -156,18 +164,7 @@ function resolveCommand(name) {
   let resolved = name;
   try {
     const shell = getLoginShell();
-    const lookupScript =
-      name === "git"
-        ? "command -v git"
-        : name === "npm"
-          ? "command -v npm"
-          : name === "node"
-            ? "command -v node"
-            : name === "npx"
-              ? "command -v npx"
-              : name === "yarn"
-                ? "command -v yarn"
-                : "command -v pnpm";
+    const lookupScript = `command -v ${name}`;
     const output = execFileSync(shell, ["-ilc", lookupScript], {
       encoding: "utf8",
       timeout: 8000,

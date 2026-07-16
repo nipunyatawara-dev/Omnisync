@@ -6,6 +6,7 @@ import { UserProfile } from "@/lib/profiles";
 import GitHubConnectModal from "@/components/GitHubConnectModal";
 import GitHubConnectedBadge from "@/components/GitHubConnectedBadge";
 import SystemPermissionsPrompt from "@/components/SystemPermissionsPrompt";
+import DevToolsSetupPrompt from "@/components/DevToolsSetupPrompt";
 import LoginStep from "@/components/setup/LoginStep";
 import ProfileSelectionStep from "@/components/setup/ProfileSelectionStep";
 import RepoSelectionStep from "@/components/setup/RepoSelectionStep";
@@ -668,6 +669,9 @@ export default function SetupPage() {
           onClose={oauth.closeOAuthModal}
         />
       )}
+
+      {/* Persistent until Node, Git, and GitHub CLI are available */}
+      {(step === "profile-selection" || step === "login") && <DevToolsSetupPrompt />}
     </div>
   );
 }

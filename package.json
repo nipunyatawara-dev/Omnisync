@@ -1,7 +1,7 @@
 {
   "name": "omnisync",
   "version": "0.1.0",
-  "omnisyncRelease": "0.3b",
+  "omnisyncRelease": "0.4b",
   "private": true,
   "main": "main.js",
   "scripts": {

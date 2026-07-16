@@ -404,9 +404,18 @@ export default function TimelineView({
                 {(() => {
                   if (!selectedCalendarDate) {
                     return (
-                      <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "var(--color-fg-subtle)", fontStyle: "italic", textAlign: "center", fontSize: "12px", gap: "8px" }}>
-                        <span>📅</span>
-                        <span>Select any cell with green commit badges on the calendar grid to load details.</span>
+                      <div
+                        style={{
+                          height: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          color: "var(--color-fg-subtle)",
+                          textAlign: "center",
+                          fontSize: "12px",
+                        }}
+                      >
+                        No date selected
                       </div>
                     );
                   }

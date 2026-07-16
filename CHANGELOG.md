@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4b
+
+### Added
+- Remote branches listed after clone (local + remote-tracking), with checkout that creates a tracking branch
+- Collaboration feed tags every commit with all branches that contain it
+- Workspace-scoped Git settings inside an open workspace; global Git defaults only from the select-workspace Settings page
+- GitHub Releases and Deployments in Environment Diagnostics Project Specifications (when the repo has them)
+- Clickable Dependencies Check tile with installed/missing package list
+- Project description fallback from GitHub repo description, then README
+- Setup-page developer tools prompt for Node.js, Git, and GitHub CLI with in-app install
+
+### Fixed
+- Remote-only branches (e.g. `dev`) missing from branch pickers after clone
+- Deleting a non-active workspace sending the app back to workspace selection
+- Settings panel failing to render when opened from the dashboard
+- Tools prompt falsely reporting Node/Git/gh as missing when already installed
+- Calendar details panel instructional placeholder text
+
+### Changed
+- Dependencies status badge copy (“Dependencies clean” instead of `node_modules`)
+- Removed status indicator dot next to Environment Diagnostics title
+- Git identity and sync behavior copy clarified for global vs per-workspace settings
+
+
 ## 0.3b
 
 ### Added
