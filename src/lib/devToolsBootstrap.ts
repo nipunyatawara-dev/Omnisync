@@ -76,50 +76,146 @@ function runCapture(cmd: string, args: string[]): Promise<{ ok: boolean; stdout:
   });
 }
 
-async function pathIsExecutable(filePath: string): Promise<boolean> {
+async function pathIsRunnable(filePath: string): Promise<boolean> {
   try {
-    await fs.access(filePath, fs.constants.X_OK);
-    return true;
+    const st = await fs.stat(filePath);
+    return st.isFile();
   } catch {
     return false;
   }
 }
 
-/** Well-known locations GUI/Electron apps often miss when login PATH is incomplete. */
-function candidatePaths(name: string): string[] {
-  const home = homedir();
-  return [
-    path.join(toolsBinDir(), name),
-    path.join(home, ".local", "bin", name),
-    path.join("/opt/homebrew/bin", name),
-    path.join("/usr/local/bin", name),
-    path.join(home, ".nvm", "current", "bin", name),
-    path.join("/usr/bin", name),
-    path.join("/bin", name),
-  ];
+/** Windows PATHEXT-style names to try for a bare tool id. */
+export function windowsToolNames(name: string): string[] {
+  if (/\.(exe|cmd|bat)$/i.test(name)) return [name];
+  // Prefer .exe (spawn without shell) over .cmd shims.
+  return [`${name}.exe`, `${name}.cmd`, `${name}.bat`, name];
 }
 
-async function resolveWhich(name: string): Promise<string | null> {
-  // 1) Prefer direct filesystem checks — reliable in packaged Electron.
-  for (const candidate of candidatePaths(name)) {
-    if (await pathIsExecutable(candidate)) {
-      return candidate;
+/**
+ * Well-known locations GUI/Electron apps often miss when PATH is incomplete.
+ * Pure helper so Windows/macOS candidates can be unit-tested.
+ */
+export function candidatePathsFor(
+  name: string,
+  opts: {
+    platform?: NodeJS.Platform;
+    home?: string;
+    toolsBin?: string;
+    env?: NodeJS.ProcessEnv;
+  } = {}
+): string[] {
+  const platform = opts.platform ?? process.platform;
+  const home = opts.home ?? homedir();
+  const toolsBin = opts.toolsBin ?? toolsBinDir();
+  const env = opts.env ?? process.env;
+  const out: string[] = [];
+
+  const push = (p: string | undefined | null) => {
+    if (p && !out.includes(p)) out.push(p);
+  };
+
+  if (platform === "win32") {
+    for (const toolName of windowsToolNames(name)) {
+      push(path.join(toolsBin, toolName));
     }
+
+    const programFiles = env.ProgramFiles || "C:\\Program Files";
+    const programFilesX86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const localAppData = env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+
+    if (name === "node" || name === "npm" || name === "npx") {
+      for (const root of [
+        path.join(programFiles, "nodejs"),
+        path.join(programFilesX86, "nodejs"),
+        path.join(localAppData, "Programs", "nodejs"),
+      ]) {
+        for (const toolName of windowsToolNames(name)) {
+          push(path.join(root, toolName));
+        }
+      }
+    }
+
+    if (name === "git") {
+      for (const root of [
+        path.join(programFiles, "Git"),
+        path.join(programFilesX86, "Git"),
+        path.join(localAppData, "Programs", "Git"),
+      ]) {
+        push(path.join(root, "cmd", "git.exe"));
+        push(path.join(root, "bin", "git.exe"));
+      }
+    }
+
+    if (name === "gh") {
+      for (const root of [
+        path.join(programFiles, "GitHub CLI"),
+        path.join(localAppData, "Programs", "GitHub CLI"),
+      ]) {
+        push(path.join(root, "gh.exe"));
+      }
+    }
+
+    // Also scan PATH entries (Electron often has a reduced PATH).
+    const pathValue = env.Path || env.PATH || "";
+    for (const dir of pathValue.split(";").map((p) => p.trim()).filter(Boolean)) {
+      for (const toolName of windowsToolNames(name)) {
+        push(path.join(dir, toolName));
+      }
+    }
+
+    return out;
   }
 
-  // 2) Login-shell lookup as a fallback (nvm/fnm/volta shims, etc.).
-  const result = await runCapture("/bin/zsh", ["-ilc", `command -v ${name} 2>/dev/null || true`]);
+  push(path.join(toolsBin, name));
+  push(path.join(home, ".local", "bin", name));
+  push(path.join("/opt/homebrew/bin", name));
+  push(path.join("/usr/local/bin", name));
+  push(path.join(home, ".nvm", "current", "bin", name));
+  push(path.join("/usr/bin", name));
+  push(path.join("/bin", name));
+  return out;
+}
+
+async function resolveViaWhere(name: string): Promise<string | null> {
+  // `where` prints every match; take the first existing file.
+  const result = await runCapture("where.exe", [name]);
+  if (!result.ok && !result.stdout) return null;
+  for (const line of result.stdout.split(/\r?\n/).map((p) => p.trim()).filter(Boolean)) {
+    if (await pathIsRunnable(line)) return line;
+  }
+  return null;
+}
+
+async function resolveViaLoginShell(name: string): Promise<string | null> {
+  const shell = process.env.SHELL || "/bin/zsh";
+  const result = await runCapture(shell, ["-ilc", `command -v ${name} 2>/dev/null || true`]);
   const line = stripShellNoise(result.stdout)
     .split("\n")
     .map((p) => p.trim())
     .filter(Boolean)
     .reverse()
     .find((p) => p.startsWith("/") && (p.endsWith(`/${name}`) || p === name));
-  if (line && (await pathIsExecutable(line))) {
+  if (line && (await pathIsRunnable(line))) {
     return line;
   }
-
   return null;
+}
+
+async function resolveWhich(name: string): Promise<string | null> {
+  // 1) Prefer direct filesystem checks — reliable in packaged Electron.
+  for (const candidate of candidatePathsFor(name)) {
+    if (await pathIsRunnable(candidate)) {
+      return candidate;
+    }
+  }
+
+  // 2) OS lookup as a fallback (PATH / nvm / Git for Windows, etc.).
+  if (process.platform === "win32") {
+    return resolveViaWhere(name);
+  }
+
+  return resolveViaLoginShell(name);
 }
 
 async function probeTool(id: DevToolId): Promise<DevToolStatus> {
@@ -228,11 +324,18 @@ async function brewInstall(formula: string, log: DevToolsLogFn): Promise<void> {
 }
 
 async function linkIntoToolsBin(source: string, name: string, log: DevToolsLogFn): Promise<void> {
-  const dest = path.join(toolsBinDir(), name);
+  const destName = process.platform === "win32" && !/\.(exe|cmd|bat)$/i.test(name) ? `${name}.exe` : name;
+  const dest = path.join(toolsBinDir(), destName);
   try {
     await fs.rm(dest, { force: true });
   } catch {
     // ignore
+  }
+  if (process.platform === "win32") {
+    // Symlinks often need admin on Windows — copy instead.
+    await fs.copyFile(source, dest);
+    log(`Copied ${destName} ← ${source}`);
+    return;
   }
   await fs.symlink(source, dest);
   log(`Linked ${name} → ${source}`);
@@ -240,14 +343,14 @@ async function linkIntoToolsBin(source: string, name: string, log: DevToolsLogFn
 
 async function installNode(log: DevToolsLogFn): Promise<void> {
   await ensureDirs();
-  if (await hasBrew()) {
+  if (process.platform !== "win32" && (await hasBrew())) {
     log("Homebrew detected — installing Node.js via brew…");
     await brewInstall("node", log);
     clearShellEnvCache();
     return;
   }
 
-  log("Homebrew not found — installing a local Node.js toolchain…");
+  log("Installing a local Node.js toolchain…");
   const indexRes = await fetch("https://nodejs.org/dist/index.json", {
     headers: { "User-Agent": "OmniSync" },
   });
@@ -257,10 +360,11 @@ async function installNode(log: DevToolsLogFn): Promise<void> {
   if (!lts) throw new Error("No Node.js LTS release found");
 
   const arch = process.arch === "arm64" ? "arm64" : "x64";
-  const platform = process.platform === "darwin" ? "darwin" : "linux";
   const version = lts.version; // e.g. v22.17.0
+  const isWin = process.platform === "win32";
+  const platform = isWin ? "win" : process.platform === "darwin" ? "darwin" : "linux";
   const folder = `node-${version}-${platform}-${arch}`;
-  const archive = `${folder}.tar.gz`;
+  const archive = isWin ? `${folder}.zip` : `${folder}.tar.gz`;
   const url = `https://nodejs.org/dist/${version}/${archive}`;
   const downloadPath = path.join(toolsRoot(), "downloads", archive);
   const extractRoot = path.join(toolsRoot(), "node");
@@ -268,25 +372,46 @@ async function installNode(log: DevToolsLogFn): Promise<void> {
   await downloadFile(url, downloadPath, log);
   await fs.rm(extractRoot, { recursive: true, force: true });
   await fs.mkdir(extractRoot, { recursive: true });
-  await runCommand("tar", ["-xzf", downloadPath, "-C", extractRoot], log);
+
+  if (isWin) {
+    await runCommand(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Expand-Archive -LiteralPath '${downloadPath.replace(/'/g, "''")}' -DestinationPath '${extractRoot.replace(/'/g, "''")}' -Force`,
+      ],
+      log
+    );
+  } else {
+    await runCommand("tar", ["-xzf", downloadPath, "-C", extractRoot], log);
+  }
 
   const nodeHome = path.join(extractRoot, folder);
-  for (const bin of ["node", "npm", "npx"]) {
-    await linkIntoToolsBin(path.join(nodeHome, "bin", bin), bin, log);
+  if (isWin) {
+    // Windows zip lays out binaries at the folder root (node.exe, npm.cmd, …).
+    for (const bin of ["node.exe", "npm.cmd", "npx.cmd"]) {
+      await linkIntoToolsBin(path.join(nodeHome, bin), bin, log);
+    }
+  } else {
+    for (const bin of ["node", "npm", "npx"]) {
+      await linkIntoToolsBin(path.join(nodeHome, "bin", bin), bin, log);
+    }
   }
   clearShellEnvCache();
 }
 
 async function installGh(log: DevToolsLogFn): Promise<void> {
   await ensureDirs();
-  if (await hasBrew()) {
+  if (process.platform !== "win32" && (await hasBrew())) {
     log("Homebrew detected — installing GitHub CLI via brew…");
     await brewInstall("gh", log);
     clearShellEnvCache();
     return;
   }
 
-  log("Homebrew not found — installing a local GitHub CLI binary…");
+  log("Installing a local GitHub CLI binary…");
   const releaseRes = await fetch("https://api.github.com/repos/cli/cli/releases/latest", {
     headers: {
       Accept: "application/vnd.github+json",
@@ -298,12 +423,16 @@ async function installGh(log: DevToolsLogFn): Promise<void> {
     assets?: Array<{ name: string; browser_download_url: string }>;
   };
   const archToken = process.arch === "arm64" ? "arm64" : "amd64";
-  const asset = (release.assets || []).find((a) =>
-    process.platform === "darwin"
-      ? a.name.includes("macOS") && a.name.includes(archToken) && a.name.endsWith(".zip")
-      : a.name.includes("linux") && a.name.includes(archToken) && a.name.endsWith(".tar.gz")
-  );
-  if (!asset) throw new Error("No compatible GitHub CLI binary found for this Mac");
+  const asset = (release.assets || []).find((a) => {
+    if (process.platform === "win32") {
+      return a.name.includes("windows") && a.name.includes(archToken) && a.name.endsWith(".zip");
+    }
+    if (process.platform === "darwin") {
+      return a.name.includes("macOS") && a.name.includes(archToken) && a.name.endsWith(".zip");
+    }
+    return a.name.includes("linux") && a.name.includes(archToken) && a.name.endsWith(".tar.gz");
+  });
+  if (!asset) throw new Error("No compatible GitHub CLI binary found for this platform");
 
   const downloadPath = path.join(toolsRoot(), "downloads", asset.name);
   await downloadFile(asset.browser_download_url, downloadPath, log);
@@ -311,28 +440,48 @@ async function installGh(log: DevToolsLogFn): Promise<void> {
   const extractDir = path.join(tmpdir(), `omnisync-gh-${Date.now()}`);
   await fs.mkdir(extractDir, { recursive: true });
   if (asset.name.endsWith(".zip")) {
-    await runCommand("unzip", ["-o", downloadPath, "-d", extractDir], log);
+    if (process.platform === "win32") {
+      await runCommand(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Expand-Archive -LiteralPath '${downloadPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`,
+        ],
+        log
+      );
+    } else {
+      await runCommand("unzip", ["-o", downloadPath, "-d", extractDir], log);
+    }
   } else {
     await runCommand("tar", ["-xzf", downloadPath, "-C", extractDir], log);
   }
 
-  // Archive layout: gh_x.y.z_macOS_arm64/bin/gh
+  // Archive layout: gh_x.y.z_<os>_<arch>/bin/gh[.exe]
   const entries = await fs.readdir(extractDir);
   const rootName = entries.find((e) => e.startsWith("gh_")) || entries[0];
-  const ghBinary = path.join(extractDir, rootName, "bin", "gh");
+  const ghBinary = path.join(
+    extractDir,
+    rootName,
+    "bin",
+    process.platform === "win32" ? "gh.exe" : "gh"
+  );
   await fs.access(ghBinary);
   const permanent = path.join(toolsRoot(), "gh", "bin");
   await fs.mkdir(permanent, { recursive: true });
-  const target = path.join(permanent, "gh");
+  const target = path.join(permanent, process.platform === "win32" ? "gh.exe" : "gh");
   await fs.copyFile(ghBinary, target);
-  await fs.chmod(target, 0o755);
-  await linkIntoToolsBin(target, "gh", log);
+  if (process.platform !== "win32") {
+    await fs.chmod(target, 0o755);
+  }
+  await linkIntoToolsBin(target, process.platform === "win32" ? "gh.exe" : "gh", log);
   clearShellEnvCache();
 }
 
 async function installGit(log: DevToolsLogFn): Promise<void> {
   await ensureDirs();
-  if (await hasBrew()) {
+  if (process.platform !== "win32" && (await hasBrew())) {
     log("Homebrew detected — installing Git via brew…");
     await brewInstall("git", log);
     clearShellEnvCache();
@@ -353,7 +502,20 @@ async function installGit(log: DevToolsLogFn): Promise<void> {
     return;
   }
 
-  throw new Error("Automatic Git install is only supported via Homebrew or macOS Command Line Tools.");
+  if (process.platform === "win32") {
+    const url = "https://git-scm.com/download/win";
+    log(`Opening ${url} — install Git for Windows, then click Refresh.`);
+    try {
+      await runCommand("cmd.exe", ["/c", "start", "", url], log);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(msg);
+    }
+    clearShellEnvCache();
+    return;
+  }
+
+  throw new Error("Automatic Git install is only supported via Homebrew, macOS Command Line Tools, or Git for Windows.");
 }
 
 export async function installDevTool(id: DevToolId, log: DevToolsLogFn): Promise<void> {
@@ -366,13 +528,15 @@ export async function installDevTool(id: DevToolId, log: DevToolsLogFn): Promise
   clearShellEnvCache();
   const status = await probeTool(id);
   if (!status.installed) {
-    throw new Error(
-      `${TOOL_META[id].label} is still not available on PATH. ${
-        id === "git"
-          ? "Finish the Command Line Tools installer, then click Refresh."
-          : "Try again or install via Homebrew."
-      }`
-    );
+    const hint =
+      id === "git"
+        ? process.platform === "win32"
+          ? "Finish the Git for Windows installer, then click Refresh."
+          : "Finish the Command Line Tools installer, then click Refresh."
+        : process.platform === "win32"
+          ? "Try again, or install from nodejs.org / GitHub CLI releases."
+          : "Try again or install via Homebrew.";
+    throw new Error(`${TOOL_META[id].label} is still not available on PATH. ${hint}`);
   }
   log(`${TOOL_META[id].label} ready (${status.version}).`);
 }

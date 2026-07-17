@@ -335,7 +335,7 @@ export default function DevToolsSetupPrompt() {
 
           <p style={{ margin: 0, fontSize: "11px", color: "var(--color-fg-muted)", lineHeight: 1.4 }}>
             You can dismiss this anytime. If tools are already installed, tap Refresh — OmniSync checks
-            Homebrew and common install paths directly.
+            common install paths and your PATH (including Git for Windows / Node.js on Windows).
           </p>
         </div>
       )}
