@@ -10,6 +10,8 @@
 - Clickable Dependencies Check tile with installed/missing package list
 - Project description fallback from GitHub repo description, then README
 - Setup-page developer tools prompt for Node.js, Git, and GitHub CLI with in-app install
+- Setup-page loading state while the workspace launcher bootstraps
+- Branded macOS DMG installer window (custom background, drag-to-Applications layout)
 
 ### Fixed
 - Remote-only branches (e.g. `dev`) missing from branch pickers after clone
@@ -17,11 +19,16 @@
 - Settings panel failing to render when opened from the dashboard
 - Tools prompt falsely reporting Node/Git/gh as missing when already installed
 - Calendar details panel instructional placeholder text
+- macOS About OmniSync showing a stale build version (`0.1.0`) next to `0.4b`
+- DevTools prompt missing installed tools on Windows due to path resolution
+- Git clone path handling and cleanup when a clone fails mid-stream
+- Electron DMGs ballooning in size because prior `dist/` builds were nested into the standalone package
 
 ### Changed
 - Dependencies status badge copy (“Dependencies clean” instead of `node_modules`)
 - Removed status indicator dot next to Environment Diagnostics title
 - Git identity and sync behavior copy clarified for global vs per-workspace settings
+- Standalone packaging prunes build artifacts and non-runtime files for leaner macOS DMGs
 
 
 ## 0.3b
